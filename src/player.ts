@@ -4,6 +4,7 @@ import { input } from "./input";
 
 const EYE_HEIGHT = 1.58;
 const MOVE_SPEED = 2.3;
+const SLOW_MOVE = 0.35;
 const LOOK_SENS = 0.0022;
 const PITCH_MIN = -1.15;
 const PITCH_MAX = 0.7;
@@ -90,8 +91,9 @@ export function updatePlayer(player: Player, world: RAPIER.World, dt: number, gr
 
   const sin = Math.sin(player.yaw);
   const cos = Math.cos(player.yaw);
-  const moveX = (strafe * cos - forward * sin) * MOVE_SPEED * dt;
-  const moveZ = (-strafe * sin - forward * cos) * MOVE_SPEED * dt;
+  const speed = MOVE_SPEED * (input.slow() ? SLOW_MOVE : 1);
+  const moveX = (strafe * cos - forward * sin) * speed * dt;
+  const moveZ = (-strafe * sin - forward * cos) * speed * dt;
 
   verticalVelocity.value += world.gravity.y * dt;
   if (grounded.value && verticalVelocity.value < 0) verticalVelocity.value = 0;

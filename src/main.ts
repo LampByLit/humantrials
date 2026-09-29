@@ -24,17 +24,17 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.localClippingEnabled = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x171b20);
-scene.fog = new THREE.Fog(0x171b20, 7, 16);
+scene.background = new THREE.Color(0xe9edf0);
+scene.fog = new THREE.Fog(0xe9edf0, 9, 18);
 
 const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 40);
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.integrationParameters.numSolverIterations = 10;
 
-scene.add(new THREE.HemisphereLight(0xd5dde8, 0x2a241c, 0.85));
-const sun = new THREE.DirectionalLight(0xfff4e0, 1.35);
-sun.position.set(3.5, 7, 2);
+scene.add(new THREE.HemisphereLight(0xf4f7fa, 0xb9bec4, 1.25));
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(1.5, 7, 1.5);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 0.5;
@@ -50,7 +50,7 @@ const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
 
 const player = createPlayer(scene, world, camera);
-const hands = await createHands(player, world);
+const hands = await createHands(world);
 const reach = createReach(hands, player);
 const beakers = createLab(scene, world);
 const hold = createHold();

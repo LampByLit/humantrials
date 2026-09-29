@@ -188,22 +188,15 @@ function report(label, cfg) {
   return l;
 }
 
-const THUMB_ABDUCT_OPEN = -0.35;
-const THUMB_ABDUCT_SHUT = 0.4;
-const THUMB_SWING_ANGLE = 0.35;
-const THUMB_MCP_ANGLE = 0.75;
-const THUMB_IP_ANGLE = 0.3;
+const THUMB_AIM = Math.PI / 2;
 const uniform = (v) => () => v;
 
-// Mirrors the thumb block of poseArm().
+// Mirrors the thumb block of poseArm(). The thumb does not move with squeeze.
 const thumb = {
   thumb: {
-    3: [
-      { axis: "X", mirrored: false, angle: THUMB_ABDUCT_SHUT, open: THUMB_ABDUCT_OPEN },
-      { axis: "Z", mirrored: true, angle: THUMB_SWING_ANGLE },
-    ],
-    2: [{ axis: "Z", mirrored: true, angle: THUMB_MCP_ANGLE }],
-    1: [{ axis: "Z", mirrored: true, angle: THUMB_IP_ANGLE }],
+    3: [{ axis: "Z", mirrored: true, angle: THUMB_AIM, open: THUMB_AIM }],
+    2: [],
+    1: [],
   },
 };
 
@@ -243,20 +236,6 @@ console.log(`-- FINGER_FAN_ANGLE (how fanned the open hand is; ${FINGER_FAN_ANGL
 for (const s of [0, 0.3, 0.5]) report(`fan ${s}`, { ...shipped, splay: s });
 console.log(`-- the fan with a side factor, which is what makes it collapse and go asymmetric`);
 report(`fan 0.3 mirrored`, { ...shipped, splaySide: true });
-
-const withThumb = (over) => {
-  const t = JSON.parse(JSON.stringify(thumb.thumb));
-  if (over.abductOpen !== undefined) t[3][0].open = over.abductOpen;
-  if (over.abductShut !== undefined) t[3][0].angle = over.abductShut;
-  if (over.swing !== undefined) t[3][1].angle = over.swing;
-  if (over.mcp !== undefined) t[2][0].angle = over.mcp;
-  if (over.ip !== undefined) t[1][0].angle = over.ip;
-  return { ...shipped, thumb: t };
-};
-console.log(`-- THUMB_ABDUCT_OPEN (how far out to the side the open thumb sits; ${THUMB_ABDUCT_OPEN} shipped)`);
-for (const abductOpen of [0, -0.2, -0.35, -0.5]) {
-  report(`abduct open ${abductOpen}`, withThumb({ abductOpen }));
-}
 
 // --- Does the thumb actually oppose the fingers? -----------------------------------
 // The palm direction is taken from the fingers' own motion rather than a cross product:
@@ -310,12 +289,6 @@ console.log(`  the thumb and index pads must swing together (pinch closes, stayi
 console.log(`  the thumb must close toward the palm (towardPalm > 0), and its inner curve must`);
 console.log(`  face the palm, meaning its convex bulge points away from it (bulge < 0).`);
 oppositionRow("shipped", shipped);
-console.log(`-- THUMB_ABDUCT_OPEN: trades claw clearance against pincer aperture`);
-for (const abductOpen of [0, -0.2, -0.35, -0.5]) oppositionRow(`abduct open ${abductOpen}`, withThumb({ abductOpen }));
-console.log(`-- THUMB_MCP_ANGLE: the knuckle bend that forms the inner curve (${THUMB_MCP_ANGLE} shipped)`);
-for (const mcp of [0.3, 0.5, 0.75, 0.9]) oppositionRow(`mcp ${mcp}`, withThumb({ mcp }));
-console.log(`-- THUMB_SWING_ANGLE: base flexion toward the palm (${THUMB_SWING_ANGLE} shipped)`);
-for (const swing of [0, 0.2, 0.35, 0.6]) oppositionRow(`swing ${swing}`, withThumb({ swing }));
 
 // The CMC is a saddle joint with two degrees of freedom, so the base gets both: a sweep
 // toward the index on local X, and a swing toward the palm on local Z.

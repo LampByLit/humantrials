@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { solutionFromHex, type Solution } from "./fluid/solution";
+import { solutionFromHex, water, type Solution } from "./fluid/solution";
 
 const WORLD_GROUP = 0x0002;
 const PROP_GROUP = 0x0008;
@@ -23,34 +23,166 @@ export type Beaker = {
 // fingertips at full stretch, so anything much wider than this cannot be picked up:
 // see tools/grip-lab.mjs. hands.ts sizes its grip from this radius.
 export const BEAKER_RADIUS = 0.034;
-const BEAKER_HEIGHT = 0.09;
+
+type Size = { radius: number; height: number; density: number; tray?: boolean };
+const SMALL: Size = { radius: 0.026, height: 0.068, density: 280 };
+const MEDIUM: Size = { radius: BEAKER_RADIUS, height: 0.09, density: 280 };
+// 8cm across, still inside the hand's span.
+const LARGE: Size = { radius: 0.04, height: 0.115, density: 280 };
+// A wide shallow dish to pour into and mix in. Heavy, so it stays put on the bench.
+const TRAY: Size = { radius: 0.085, height: 0.03, density: 900, tray: true };
+
+// Solute mass per cubic metre of stock solution: 10 per litre, so a 10mL draw is a dose
+// of 0.1 against the body's deflection scale of 1.
+const STOCK = 10000;
+
+// The three elements.
+const RED = 0xe23b2f;
+const GREEN = 0x2f8f4e;
+const BLUE = 0x2d6fdb;
+
+const BENCH_TOP = 0.9;
+const SURFACE = BENCH_TOP + 0.035;
+const BENCH_WIDTH = 1.55;
+const BENCH_DEPTH = 0.78;
+
+type Stock = { size: Size; hex?: number; fill: number };
+
+// Benches run left to right; items are listed from the player's left along the edge
+// nearest the aisle. A missing hex is water; a zero fill is an empty vessel.
+const BENCHES: { x: number; z: number; facing: 1 | -1; items: Stock[] }[] = [
+  {
+    // Elements, with empties to mix into.
+    x: 0,
+    z: -0.2,
+    facing: 1,
+    items: [
+      { size: MEDIUM, hex: RED, fill: 0.72 },
+      { size: MEDIUM, hex: GREEN, fill: 0.72 },
+      { size: MEDIUM, hex: BLUE, fill: 0.72 },
+      { size: TRAY, fill: 0 },
+      { size: MEDIUM, fill: 0 },
+      { size: SMALL, fill: 0 },
+    ],
+  },
+  {
+    // Water.
+    x: -1.8,
+    z: -0.2,
+    facing: 1,
+    items: [
+      { size: LARGE, fill: 0.8 },
+      { size: LARGE, fill: 0.8 },
+      { size: MEDIUM, fill: 0.75 },
+      { size: MEDIUM, fill: 0.75 },
+      { size: SMALL, fill: 0.7 },
+      { size: TRAY, fill: 0 },
+    ],
+  },
+  {
+    // Premixed secondaries and tertiaries.
+    x: 1.8,
+    z: -0.2,
+    facing: 1,
+    items: [
+      { size: LARGE, hex: 0xe8c43a, fill: 0.6 }, // yellow
+      { size: MEDIUM, hex: 0x2fb8c4, fill: 0.6 }, // cyan
+      { size: SMALL, hex: 0xc8309a, fill: 0.65 }, // magenta
+      { size: SMALL, hex: 0xe8742a, fill: 0.65 }, // orange
+      { size: MEDIUM, hex: 0x6a3ad0, fill: 0.55 }, // violet
+      { size: SMALL, hex: 0x8ad83a, fill: 0.65 }, // lime
+    ],
+  },
+  {
+    // Muddy, low-purity compounds: cheap and dirty.
+    x: -0.9,
+    z: 2.2,
+    facing: -1,
+    items: [
+      { size: MEDIUM, hex: 0x8b6b3e, fill: 0.6 }, // brown
+      { size: SMALL, hex: 0x7a7a34, fill: 0.6 }, // olive
+      { size: MEDIUM, hex: 0x5a6a8a, fill: 0.6 }, // slate
+      { size: SMALL, hex: 0xe8a0b4, fill: 0.6 }, // pastel rose
+      { size: LARGE, hex: 0x3a7a6a, fill: 0.5 }, // teal
+    ],
+  },
+  {
+    // Mixing station.
+    x: 0.9,
+    z: 2.2,
+    facing: -1,
+    items: [
+      { size: TRAY, fill: 0 },
+      { size: LARGE, fill: 0 },
+      { size: MEDIUM, fill: 0 },
+      { size: SMALL, fill: 0 },
+      { size: TRAY, fill: 0 },
+    ],
+  },
+];
 
 export function createLab(scene: THREE.Scene, world: RAPIER.World): Beaker[] {
-  const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2e33, roughness: 0.95 });
-  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x3c434b, roughness: 0.9 });
-  const benchMaterial = new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.55, metalness: 0.04 });
+  const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xdfe2e5, roughness: 0.6 });
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f5f6, roughness: 0.9 });
+  const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xf7f8f9, roughness: 0.95 });
+  const topMaterial = new THREE.MeshStandardMaterial({ color: 0xeef0f2, roughness: 0.35, metalness: 0.02 });
+  const cabinetMaterial = new THREE.MeshStandardMaterial({ color: 0xfafbfc, roughness: 0.7 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: 0xb8bec4, roughness: 0.5, metalness: 0.3 });
+  const panelMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xffffff,
+    emissiveIntensity: 1.2,
+  });
 
   addBox(scene, world, floorMaterial, 8, 0.5, 8, 0, -0.25, 0);
-  addBox(scene, world, wallMaterial, 8, 1.5, 0.2, 0, 1.5, -4);
-  addBox(scene, world, wallMaterial, 8, 1.5, 0.2, 0, 1.5, 4);
-  addBox(scene, world, wallMaterial, 0.2, 1.5, 8, -4, 1.5, 0);
-  addBox(scene, world, wallMaterial, 0.2, 1.5, 8, 4, 1.5, 0);
-
-  const topY = 0.9;
-  addBox(scene, world, benchMaterial, 1.55, 0.07, 0.78, 0, topY, -0.2);
-  const legH = 0.86;
-  for (const x of [-0.68, 0.68]) {
-    for (const z of [-0.48, 0.08]) {
-      addBox(scene, world, benchMaterial, 0.08, legH, 0.08, x, legH / 2, z);
+  addBox(scene, world, ceilingMaterial, 8, 0.2, 8, 0, 3.1, 0);
+  addBox(scene, world, wallMaterial, 8, 3, 0.2, 0, 1.5, -4);
+  addBox(scene, world, wallMaterial, 8, 3, 0.2, 0, 1.5, 4);
+  addBox(scene, world, wallMaterial, 0.2, 3, 8, -4, 1.5, 0);
+  addBox(scene, world, wallMaterial, 0.2, 3, 8, 4, 1.5, 0);
+  for (const x of [-1.8, 0, 1.8]) {
+    for (const z of [-0.2, 2.2]) {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.02, 0.3), panelMaterial);
+      panel.position.set(x, 2.99, z);
+      scene.add(panel);
     }
   }
 
-  const surface = topY + 0.035;
-  return [
-    addBeaker(scene, world, 0xe23b2f, -0.3, surface, 0.0, 0.72),
-    addBeaker(scene, world, 0x2f8f4e, 0.02, surface, 0.06, 0.5),
-    addBeaker(scene, world, 0x2d6fdb, 0.32, surface, -0.04, 0.64),
-  ];
+  const beakers: Beaker[] = [];
+  for (const bench of BENCHES) {
+    addBench(scene, world, bench.x, bench.z, topMaterial, cabinetMaterial, trimMaterial);
+    // Items line the aisle-side edge, within arm's length of someone standing at the bench.
+    const edge = bench.z + bench.facing * (BENCH_DEPTH / 2 - 0.13);
+    const widths = bench.items.map((item) => item.size.radius * 2);
+    const gap = 0.06;
+    const span = widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1);
+    let cursor = bench.x - bench.facing * (span / 2);
+    for (const item of bench.items) {
+      const r = item.size.radius;
+      cursor += bench.facing * r;
+      const z = edge - bench.facing * (item.size.tray ? r - 0.04 : 0);
+      beakers.push(addVessel(scene, world, item, cursor, z));
+      cursor += bench.facing * (r + gap);
+    }
+  }
+  return beakers;
+}
+
+function addBench(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  x: number,
+  z: number,
+  top: THREE.Material,
+  cabinet: THREE.Material,
+  trim: THREE.Material,
+) {
+  addBox(scene, world, top, BENCH_WIDTH, 0.07, BENCH_DEPTH, x, BENCH_TOP, z);
+  const cabinetHeight = BENCH_TOP - 0.035 - 0.08;
+  addBox(scene, world, cabinet, BENCH_WIDTH - 0.06, cabinetHeight, BENCH_DEPTH - 0.1, x, 0.08 + cabinetHeight / 2, z);
+  const kick = new THREE.Mesh(new THREE.BoxGeometry(BENCH_WIDTH - 0.1, 0.08, BENCH_DEPTH - 0.16), trim);
+  kick.position.set(x, 0.04, z);
+  scene.add(kick);
 }
 
 function addBox(
@@ -80,37 +212,38 @@ function addBox(
   );
 }
 
-function addBeaker(
-  scene: THREE.Scene,
-  world: RAPIER.World,
-  color: number,
-  x: number,
-  surfaceY: number,
-  z: number,
-  fill: number,
-): Beaker {
-  const radius = BEAKER_RADIUS;
-  const height = BEAKER_HEIGHT;
+const glass = new THREE.MeshPhysicalMaterial({
+  color: 0xdfe7ea,
+  transparent: true,
+  opacity: 0.28,
+  roughness: 0.08,
+  metalness: 0,
+  side: THREE.DoubleSide,
+  depthWrite: true,
+});
+
+const plastic = new THREE.MeshStandardMaterial({
+  color: 0xf4f6f7,
+  roughness: 0.4,
+  transparent: true,
+  opacity: 0.55,
+  side: THREE.DoubleSide,
+  depthWrite: true,
+});
+
+function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: number, z: number): Beaker {
+  const { radius, height, density, tray } = stock.size;
+  const material = tray ? plastic : glass;
   const mesh = new THREE.Group();
 
-  const glass = new THREE.MeshPhysicalMaterial({
-    color: 0xdfe7ea,
-    transparent: true,
-    opacity: 0.28,
-    roughness: 0.08,
-    metalness: 0,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-
   const wall = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius * 0.92, height, 28, 1, true),
-    glass,
+    new THREE.CylinderGeometry(radius, radius * (tray ? 0.96 : 0.92), height, tray ? 40 : 28, 1, true),
+    material,
   );
-  const bottom = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.9, 28), glass);
+  const bottom = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.9, 28), material);
   bottom.rotation.x = -Math.PI / 2;
   bottom.position.y = -height / 2 + 0.004;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.006, 8, 28), glass);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(radius, tray ? 0.004 : 0.006, 8, 28), material);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = height / 2;
   wall.renderOrder = 3;
@@ -121,7 +254,7 @@ function addBeaker(
   mesh.castShadow = true;
   scene.add(mesh);
 
-  const centerY = surfaceY + height / 2;
+  const centerY = SURFACE + height / 2;
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, centerY, z)
@@ -131,7 +264,7 @@ function addBeaker(
   );
   const collider = world.createCollider(
     RAPIER.ColliderDesc.cylinder(height / 2, radius)
-      .setDensity(280)
+      .setDensity(density)
       .setFriction(1.4)
       .setRestitution(0.04)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
@@ -140,13 +273,14 @@ function addBeaker(
   );
 
   mesh.position.set(x, centerY, z);
+  const volume = Math.PI * radius * radius * height * stock.fill;
   return {
     mesh,
     body,
     collider,
     radius,
     height,
-    solution: solutionFromHex(color, Math.PI * radius * radius * height * fill),
+    solution: stock.hex === undefined ? water(volume) : solutionFromHex(stock.hex, volume, STOCK),
   };
 }
 

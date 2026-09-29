@@ -3,14 +3,14 @@ export const input = {
   lookX: 0,
   lookY: 0,
   pourX: 0,
+  pourY: 0,
   reach: 0,
   space: false,
-  toggleLeft: false,
-  toggleRight: false,
-  squeezeLeft: false,
-  squeezeRight: false,
+  toggle: false,
+  squeeze: false,
   locked: false,
   playing: false,
+  slow: (): boolean => input.keys.has("ShiftLeft") || input.keys.has("ShiftRight"),
 };
 
 export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
@@ -20,8 +20,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
     if (!locked) {
       input.keys.clear();
       input.space = false;
-      input.squeezeLeft = false;
-      input.squeezeRight = false;
+      input.squeeze = false;
     }
   };
 
@@ -56,8 +55,10 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
 
   document.addEventListener("mousemove", (event) => {
     if (!input.playing) return;
-    if (input.space) input.pourX += event.movementX;
-    else if (input.locked) {
+    if (input.space) {
+      input.pourX += event.movementX;
+      input.pourY += event.movementY;
+    } else if (input.locked) {
       input.lookX += event.movementX;
       input.lookY += event.movementY;
     }
@@ -82,17 +83,16 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       canvas.requestPointerLock();
       return;
     }
+    if (event.button !== 0) return;
     pressedAt[event.button] = performance.now();
-    if (event.button === 0) input.squeezeLeft = true;
-    if (event.button === 2) input.squeezeRight = true;
+    input.squeeze = true;
   };
 
   const onRelease = (event: MouseEvent) => {
-    if (event.button !== 0 && event.button !== 2) return;
+    if (event.button !== 0) return;
     const held = performance.now() - pressedAt[event.button];
     pressedAt[event.button] = 0;
-    if (event.button === 0) input.squeezeLeft = false;
-    if (event.button === 2) input.squeezeRight = false;
+    input.squeeze = false;
     if (!input.playing || held <= 0 || held > 220) {
       lastTap[event.button] = 0;
       return;
@@ -100,8 +100,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
     const now = performance.now();
     if (now - lastTap[event.button] <= 320) {
       lastTap[event.button] = 0;
-      if (event.button === 0) input.toggleLeft = true;
-      if (event.button === 2) input.toggleRight = true;
+      input.toggle = true;
     } else {
       lastTap[event.button] = now;
     }

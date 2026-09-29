@@ -3,12 +3,12 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { input } from "./input";
 import { BEAKER_RADIUS } from "./lab";
-import type { Player } from "./player";
 
 const MODEL_URL = "/models/fps-arm-rig.glb";
 const MODEL_SCALE = 0.0046;
 const POUR_SENS = 0.007;
 const POUR_LIMIT = 1.15;
+const SLOW_POUR = 0.3;
 const HAND_LERP = 9;
 const SQUEEZE_LERP = 18;
 const DROP_ANGLE = 1.35;
@@ -31,13 +31,9 @@ const FINGER_FAN: Record<string, number> = { Index: -1, Middle: -0.25, Ring: 0.5
 // local X abducts the thumb out to the side, and local Z swings it in toward the palm.
 // Only Z mirrors between hands; X points the same way on both. Closing has to happen on
 // Z, or the thumb travels sideways past the fingers instead of meeting them.
-const THUMB_ABDUCT_OPEN = -0.35; // open hand holds the thumb out to the side
-const THUMB_ABDUCT_SHUT = 0.4;
-const THUMB_SWING_ANGLE = 0.35; // base flexion, carrying the thumb toward the palm
-// The knuckle does most of the bending, which is what curves the thumb so its inner face
-// turns to oppose the palm. The tip stays fairly straight, as it does on a real pinch.
-const THUMB_MCP_ANGLE = 0.75;
-const THUMB_IP_ANGLE = 0.3;
+// Bind pose lays the thumb along the fingers. A right-angle swing at the base aims it
+// across the body, toward where the other hand sits, and the grip leaves it there.
+const THUMB_AIM = Math.PI / 2;
 const SPLAY_ANGLE = 0.34;
 
 const HAND_GROUP = 0x0004;
@@ -57,7 +53,7 @@ type Digit = {
   thumb: boolean;
 };
 
-type Arm = {
+export type Arm = {
   side: -1 | 1;
   raised: boolean;
   blend: number;
@@ -77,12 +73,17 @@ type Arm = {
 
 export type Hands = {
   model: THREE.Object3D;
-  left: Arm;
-  right: Arm;
+  arm: Arm;
+  // Tilt of a held beaker in the player's frame: roll tips it left and right, pitch
+  // tips it away from and toward the player.
   pourRoll: number;
+  pourPitch: number;
 };
 
-export async function createHands(player: Player, world: RAPIER.World): Promise<Hands> {
+// The player has one arm, the rig's right. The rig ships both arms in one skinned mesh,
+// so the left is collapsed onto its shoulder rather than removed from the geometry.
+// reach.ts parents and places the model.
+export async function createHands(world: RAPIER.World): Promise<Hands> {
   const gltf = await new GLTFLoader().loadAsync(MODEL_URL);
   const model = gltf.scene;
   model.scale.setScalar(MODEL_SCALE);
@@ -104,19 +105,45 @@ export async function createHands(player: Player, world: RAPIER.World): Promise<
     }
   });
 
+  removeLeftArm(model);
   model.updateMatrixWorld(true);
-  const leftHand = findBone(model, "HandL");
-  const rightHand = findBone(model, "HandR");
-  const midpoint = leftHand.getWorldPosition(new THREE.Vector3());
-  midpoint.add(rightHand.getWorldPosition(new THREE.Vector3())).multiplyScalar(0.5);
-  model.position.x -= midpoint.x;
-  model.position.y += -0.12 - midpoint.y;
-  model.position.z += -0.3 - midpoint.z;
-  player.pivot.add(model);
+  return { model, arm: createArm(model, world, 1), pourRoll: 0, pourPitch: 0 };
+}
 
-  const left = createArm(model, world, -1);
-  const right = createArm(model, world, 1);
-  return { model, left, right, pourRoll: 0 };
+// Drops every triangle that touches a vertex bound mostly to the left shoulder chain.
+function removeLeftArm(model: THREE.Object3D) {
+  const left = new Set<THREE.Object3D>();
+  findBone(model, "ShoulderL").traverse((object) => left.add(object));
+  model.traverse((object) => {
+    const mesh = object as THREE.SkinnedMesh;
+    if (!mesh.isSkinnedMesh) return;
+    const onLeft = mesh.skeleton.bones.map((bone) => left.has(bone));
+    const geometry = mesh.geometry;
+    const joints = geometry.getAttribute("skinIndex");
+    const weights = geometry.getAttribute("skinWeight");
+    const leftVertex = (vertex: number) => {
+      let best = 0;
+      let joint = 0;
+      for (let k = 0; k < 4; k++) {
+        const weight = weights.getComponent(vertex, k);
+        if (weight > best) {
+          best = weight;
+          joint = joints.getComponent(vertex, k);
+        }
+      }
+      return onLeft[joint];
+    };
+    const index = geometry.index;
+    const count = index ? index.count : geometry.getAttribute("position").count;
+    const keep: number[] = [];
+    for (let i = 0; i < count; i += 3) {
+      const a = index ? index.getX(i) : i;
+      const b = index ? index.getX(i + 1) : i + 1;
+      const c = index ? index.getX(i + 2) : i + 2;
+      if (!leftVertex(a) && !leftVertex(b) && !leftVertex(c)) keep.push(a, b, c);
+    }
+    geometry.setIndex(keep);
+  });
 }
 
 function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1): Arm {
@@ -220,27 +247,30 @@ const tipPosition = new THREE.Vector3();
 const tipQuaternion = new THREE.Quaternion();
 
 export function updateHands(hands: Hands, dt: number) {
-  if (input.toggleLeft) {
-    hands.left.raised = !hands.left.raised;
-    input.toggleLeft = false;
-  }
-  if (input.toggleRight) {
-    hands.right.raised = !hands.right.raised;
-    input.toggleRight = false;
+  if (input.toggle) {
+    hands.arm.raised = !hands.arm.raised;
+    input.toggle = false;
   }
 
   if (input.playing && input.space) {
-    hands.pourRoll = Math.max(-POUR_LIMIT, Math.min(POUR_LIMIT, hands.pourRoll - input.pourX * POUR_SENS));
+    const sens = POUR_SENS * (input.slow() ? SLOW_POUR : 1);
+    hands.pourRoll = clampPour(hands.pourRoll - input.pourX * sens);
+    hands.pourPitch = clampPour(hands.pourPitch + input.pourY * sens);
   } else {
-    hands.pourRoll += (0 - hands.pourRoll) * (1 - Math.exp(-7 * dt));
+    const settle = 1 - Math.exp(-7 * dt);
+    hands.pourRoll -= hands.pourRoll * settle;
+    hands.pourPitch -= hands.pourPitch * settle;
   }
   input.pourX = 0;
+  input.pourY = 0;
 
-  poseArm(hands.left, hands.pourRoll, dt, input.squeezeLeft);
-  poseArm(hands.right, hands.pourRoll, dt, input.squeezeRight);
+  poseArm(hands.arm, hands.pourRoll, dt, input.squeeze);
   hands.model.updateMatrixWorld(true);
-  syncArm(hands.left);
-  syncArm(hands.right);
+  syncArm(hands.arm);
+}
+
+function clampPour(angle: number) {
+  return Math.max(-POUR_LIMIT, Math.min(POUR_LIMIT, angle));
 }
 
 function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
@@ -269,18 +299,9 @@ function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
     const bone = digit.bone;
     bone.quaternion.copy(digit.rest);
     if (bone.name.startsWith("Thumb_3")) {
-      const abduct = THUMB_ABDUCT_OPEN + arm.squeeze * (THUMB_ABDUCT_SHUT - THUMB_ABDUCT_OPEN);
-      thumbSpin.setFromAxisAngle(xAxis, abduct);
+      thumbSpin.setFromAxisAngle(zAxis, -arm.side * THUMB_AIM);
       bone.quaternion.multiply(thumbSpin);
-      thumbSpin.setFromAxisAngle(zAxis, -arm.side * arm.squeeze * THUMB_SWING_ANGLE);
-      bone.quaternion.multiply(thumbSpin);
-    } else if (bone.name.startsWith("Thumb_2")) {
-      thumbSpin.setFromAxisAngle(zAxis, -arm.side * arm.squeeze * THUMB_MCP_ANGLE);
-      bone.quaternion.multiply(thumbSpin);
-    } else if (bone.name.startsWith("Thumb_1")) {
-      thumbSpin.setFromAxisAngle(zAxis, -arm.side * arm.squeeze * THUMB_IP_ANGLE);
-      bone.quaternion.multiply(thumbSpin);
-    } else {
+    } else if (!digit.thumb) {
       spin.setFromAxisAngle(zAxis, -arm.side * (digit.claw + arm.squeeze * (digit.wrap - digit.claw)));
       bone.quaternion.multiply(spin);
       if (digit.fan !== 0) {
@@ -306,7 +327,9 @@ function syncArm(arm: Arm) {
   for (const tip of arm.tips) {
     tip.bone.getWorldPosition(tipPosition);
     tip.bone.getWorldQuaternion(tipQuaternion);
-    arm.hand.worldToLocal(tipPosition);
+    // The body is unscaled, so the offset must stay in metres: worldToLocal on the bone
+    // would divide by the rig's model scale and fling the collider metres away.
+    tipPosition.sub(handPosition).applyQuaternion(handInverse);
     tipQuaternion.premultiply(handInverse);
     tip.collider.setTranslationWrtParent({ x: tipPosition.x, y: tipPosition.y, z: tipPosition.z });
     tip.collider.setRotationWrtParent({

@@ -1,6 +1,9 @@
 export type Vec3 = { x: number; y: number; z: number };
 
 const DEADZONE = 0.000002;
+// Liquid that no longer fits under the lip leaves within about this long. Without it the
+// weir term alone makes wide, shallow vessels such as trays dribble instead of pour.
+const OVERFLOW_DRAIN_TIME = 0.3;
 
 export function cylinderCapacity(radius: number, height: number) {
   return Math.PI * radius * radius * height;
@@ -85,8 +88,8 @@ export function pourFlow(overflow: number, radius: number) {
   const area = Math.PI * radius * radius;
   const head = headroom / area;
   const width = Math.min(2 * radius, 2 * Math.sqrt(Math.max(0, radius * head)));
-  const flow = 1.65 * Math.max(width, 0.004) * Math.pow(head, 1.5);
-  return Math.min(flow, 0.0025);
+  const weir = 1.65 * Math.max(width, 0.004) * Math.pow(head, 1.5);
+  return Math.min(Math.max(weir, headroom / OVERFLOW_DRAIN_TIME), 0.0025);
 }
 
 /** Lowest point on the opening rim, in beaker-local space. */

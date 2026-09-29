@@ -12,19 +12,23 @@ const ARC_GAIN = 1.25;
 const REACH_MIN = 0.25;
 const REACH_MAX = 0.75;
 const REACH_REST = 0.32;
+// Extra reach added as the arc swings below the shoulder, so looking at the bench puts the
+// hands on it without scrolling.
+const DOWN_REACH = 0.25;
 const REACH_SENS = 0.0005;
 const FOLLOW = 14;
 const MODEL_TILT = 0.2;
+// The one hand sits a little right of the view centre, like a held weapon in an FPS.
+const HAND_SIDE = 0.12;
 
 export type Reach = {
   distance: number;
   shoulder: THREE.Vector3;
-  // From the model's origin to the midpoint of the two wrists, in the body's frame.
+  // From the model's origin to the right wrist, in the body's frame.
   wristOffset: THREE.Vector3;
 };
 
 const target = new THREE.Vector3();
-const scratch = new THREE.Vector3();
 
 export function createReach(hands: Hands, player: Player): Reach {
   const model = hands.model;
@@ -34,13 +38,11 @@ export function createReach(hands: Hands, player: Player): Reach {
   player.object.add(model);
   player.object.updateMatrixWorld(true);
 
-  const wristOffset = hands.left.hand.getWorldPosition(new THREE.Vector3());
-  wristOffset.add(hands.right.hand.getWorldPosition(scratch)).multiplyScalar(0.5);
-  player.object.worldToLocal(wristOffset);
+  const wristOffset = player.object.worldToLocal(hands.arm.hand.getWorldPosition(new THREE.Vector3()));
 
   const reach: Reach = {
     distance: REACH_REST,
-    shoulder: new THREE.Vector3(0, player.pivot.position.y - SHOULDER_DROP, 0),
+    shoulder: new THREE.Vector3(HAND_SIDE, player.pivot.position.y - SHOULDER_DROP, 0),
     wristOffset,
   };
   place(reach, hands, player, 1);
@@ -55,8 +57,9 @@ export function updateReach(reach: Reach, hands: Hands, player: Player, dt: numb
 
 function place(reach: Reach, hands: Hands, player: Player, blend: number) {
   const arc = (player.pitch - REST_PITCH) * ARC_GAIN;
+  const distance = reach.distance + DOWN_REACH * Math.max(0, -Math.sin(arc));
   target
-    .set(0, Math.sin(arc) * reach.distance, -Math.cos(arc) * reach.distance)
+    .set(0, Math.sin(arc) * distance, -Math.cos(arc) * distance)
     .add(reach.shoulder)
     .sub(reach.wristOffset);
   hands.model.position.lerp(target, blend);

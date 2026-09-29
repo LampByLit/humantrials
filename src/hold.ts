@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Hands } from "./hands";
+import type { Arm, Hands } from "./hands";
 import type { Beaker } from "./lab";
 
 const HAND = 0x0004;
@@ -10,18 +10,16 @@ const RELEASE_SQUEEZE = 0.28;
 const REACH_SQUEEZE = 0.15;
 const GRAB_GAP = 0.04;
 const BREAK_DISTANCE = 0.22;
-const BREAK_ANGLE = 1.25;
 const MAX_SPEED = 6;
 const MAX_SPIN = 25;
 const PALM = new THREE.Vector3(0, 0.06, 0);
 
-type Arm = Hands["left"];
-
+// A held beaker's position follows the hand, but its orientation does not: it stands
+// upright in the player's facing and only the pour tilt tips it.
 type Grip = {
   arm: Arm;
   beaker: Beaker;
   localPos: THREE.Vector3;
-  localRot: THREE.Quaternion;
 };
 
 export type Hold = {
@@ -36,6 +34,8 @@ const bodyPos = new THREE.Vector3();
 const bodyQuat = new THREE.Quaternion();
 const targetPos = new THREE.Vector3();
 const targetQuat = new THREE.Quaternion();
+const tilt = new THREE.Quaternion();
+const tiltEuler = new THREE.Euler(0, 0, 0, "XZY");
 const axis = new THREE.Vector3();
 const point = new THREE.Vector3();
 const palmPos = new THREE.Vector3();
@@ -49,23 +49,21 @@ export function createHold(): Hold {
 
 export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], dt: number) {
   if (dt < 1e-4) return;
-  for (const arm of [hands.left, hands.right]) {
-    const holding = hold.grips.some((grip) => grip.arm === arm);
-    const reaching = holding || (arm.squeeze > REACH_SQUEEZE && handNearBeaker(arm, beakers));
-    if (hold.reaching.get(arm) !== reaching) {
-      setHandSolids(arm, !reaching);
-      hold.reaching.set(arm, reaching);
-    }
+  const arm = hands.arm;
+  const holding = hold.grips.some((grip) => grip.arm === arm);
+  const reaching = holding || (arm.squeeze > REACH_SQUEEZE && handNearBeaker(arm, beakers));
+  if (hold.reaching.get(arm) !== reaching) {
+    setHandSolids(arm, !reaching);
+    hold.reaching.set(arm, reaching);
   }
 
   for (let i = hold.grips.length - 1; i >= 0; i--) {
     const grip = hold.grips[i];
     if (grip.arm.squeeze < RELEASE_SQUEEZE) release(hold, grip);
-    else servo(hold, grip, dt);
+    else servo(hold, hands, grip, dt);
   }
 
-  for (const arm of [hands.left, hands.right]) {
-    if (arm.squeeze < GRAB_SQUEEZE || hold.grips.some((grip) => grip.arm === arm)) continue;
+  if (arm.squeeze >= GRAB_SQUEEZE && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = nearestBeaker(hold, arm, beakers);
     if (beaker) grab(hold, arm, beaker);
   }
@@ -82,15 +80,12 @@ function grab(hold: Hold, arm: Arm, beaker: Beaker) {
   arm.hand.getWorldPosition(handPos);
   arm.hand.getWorldQuaternion(handQuat);
   const translation = beaker.body.translation();
-  const rotation = beaker.body.rotation();
   bodyPos.set(translation.x, translation.y, translation.z);
-  bodyQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
   invHand.copy(handQuat).invert();
   const grip: Grip = {
     arm,
     beaker,
     localPos: bodyPos.clone().sub(handPos).applyQuaternion(invHand),
-    localRot: invHand.clone().multiply(bodyQuat),
   };
   beaker.body.setGravityScale(0, true);
   beaker.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -106,11 +101,13 @@ function release(hold: Hold, grip: Grip) {
   if (index >= 0) hold.grips.splice(index, 1);
 }
 
-function servo(hold: Hold, grip: Grip, dt: number) {
+function servo(hold: Hold, hands: Hands, grip: Grip, dt: number) {
   grip.arm.hand.getWorldPosition(handPos);
   grip.arm.hand.getWorldQuaternion(handQuat);
   targetPos.copy(grip.localPos).applyQuaternion(handQuat).add(handPos);
-  targetQuat.copy(handQuat).multiply(grip.localRot);
+  hands.model.parent!.getWorldQuaternion(targetQuat);
+  tiltEuler.set(hands.pourPitch, 0, hands.pourRoll);
+  targetQuat.multiply(tilt.setFromEuler(tiltEuler));
 
   const translation = grip.beaker.body.translation();
   const rotation = grip.beaker.body.rotation();
@@ -119,7 +116,7 @@ function servo(hold: Hold, grip: Grip, dt: number) {
 
   const error = targetPos.distanceTo(bodyPos);
   const angle = rotationError(bodyQuat, targetQuat, axis);
-  if (error > BREAK_DISTANCE || angle > BREAK_ANGLE) {
+  if (error > BREAK_DISTANCE) {
     const velocity = grip.beaker.body.linvel();
     grip.beaker.body.setLinvel(
       { x: velocity.x * 0.25, y: velocity.y * 0.25, z: velocity.z * 0.25 },
