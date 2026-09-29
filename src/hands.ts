@@ -33,7 +33,11 @@ const FINGER_FAN: Record<string, number> = { Index: -1, Middle: -0.25, Ring: 0.5
 // Z, or the thumb travels sideways past the fingers instead of meeting them.
 // Bind pose lays the thumb along the fingers. A right-angle swing at the base aims it
 // across the body, toward where the other hand sits, and the grip leaves it there.
-const THUMB_AIM = Math.PI / 2;
+const THUMB_AIM = 1.25;
+// The knuckle and tip are pre-bent toward the fingers. These undo that so the thumb
+// runs straight out to the left instead of hooking forward. Same sign on both hands.
+const THUMB_KNUCKLE_STRAIGHT = -0.4;
+const THUMB_TIP_STRAIGHT = -0.35;
 const SPLAY_ANGLE = 0.34;
 
 const HAND_GROUP = 0x0004;
@@ -300,6 +304,12 @@ function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
     bone.quaternion.copy(digit.rest);
     if (bone.name.startsWith("Thumb_3")) {
       thumbSpin.setFromAxisAngle(zAxis, -arm.side * THUMB_AIM);
+      bone.quaternion.multiply(thumbSpin);
+    } else if (bone.name.startsWith("Thumb_2")) {
+      thumbSpin.setFromAxisAngle(xAxis, THUMB_KNUCKLE_STRAIGHT);
+      bone.quaternion.multiply(thumbSpin);
+    } else if (bone.name.startsWith("Thumb_1")) {
+      thumbSpin.setFromAxisAngle(xAxis, THUMB_TIP_STRAIGHT);
       bone.quaternion.multiply(thumbSpin);
     } else if (!digit.thumb) {
       spin.setFromAxisAngle(zAxis, -arm.side * (digit.claw + arm.squeeze * (digit.wrap - digit.claw)));

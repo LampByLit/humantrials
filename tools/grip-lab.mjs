@@ -188,15 +188,17 @@ function report(label, cfg) {
   return l;
 }
 
-const THUMB_AIM = Math.PI / 2;
+const THUMB_AIM = 1.25;
+const THUMB_KNUCKLE_STRAIGHT = -0.4;
+const THUMB_TIP_STRAIGHT = -0.35;
 const uniform = (v) => () => v;
 
 // Mirrors the thumb block of poseArm(). The thumb does not move with squeeze.
 const thumb = {
   thumb: {
     3: [{ axis: "Z", mirrored: true, angle: THUMB_AIM, open: THUMB_AIM }],
-    2: [],
-    1: [],
+    2: [{ axis: "X", mirrored: false, angle: THUMB_KNUCKLE_STRAIGHT, open: THUMB_KNUCKLE_STRAIGHT }],
+    1: [{ axis: "X", mirrored: false, angle: THUMB_TIP_STRAIGHT, open: THUMB_TIP_STRAIGHT }],
   },
 };
 

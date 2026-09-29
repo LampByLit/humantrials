@@ -17,6 +17,8 @@ const WATER_TINT = new THREE.Color().setRGB(0.82, 0.9, 0.95, THREE.SRGBColorSpac
 const FULL_COLOR_CONCENTRATION = 4000;
 const PUDDLE_COUNT = 48;
 const PUDDLE_MERGE_GAP = 0.015;
+const PUDDLE_DEPTH = 0.0025;
+const PUDDLE_LIFT = 0.004;
 
 type Droplet = {
   x: number;
@@ -44,7 +46,8 @@ type Puddle = {
   r: number;
   g: number;
   b: number;
-  normal: THREE.Vector3;
+  // Set when the volume or centre changes, so merging and spilling run only then.
+  dirty: boolean;
 };
 
 type Vessel = {
@@ -149,6 +152,7 @@ export function updateFluid(sim: FluidSim, world: RAPIER.World, dt: number) {
 
   flushPending(sim, step);
   stepDroplets(sim, world, step);
+  spreadPuddles(sim, world);
   scoopPuddles(sim);
 
   for (const vessel of sim.vessels) {
@@ -157,7 +161,7 @@ export function updateFluid(sim: FluidSim, world: RAPIER.World, dt: number) {
     writeStream(vessel);
   }
   writeDroplets(sim);
-  writePuddles(sim, world);
+  writePuddles(sim);
 }
 
 function createVessel(
@@ -333,7 +337,7 @@ function createPuddle(scene: THREE.Scene, envMap: THREE.Texture | null): Puddle 
   mesh.renderOrder = 4;
   mesh.material.depthWrite = false;
   scene.add(mesh);
-  return { mesh, volume: 0, mass: 0, r: 1, g: 1, b: 1, normal: new THREE.Vector3(0, 1, 0) };
+  return { mesh, volume: 0, mass: 0, r: 1, g: 1, b: 1, dirty: false };
 }
 
 function slosh(vessel: Vessel, dt: number) {
@@ -664,7 +668,7 @@ function receive(sim: FluidSim, beaker: Beaker, r: number, g: number, b: number,
 // puddle. Nothing is left on a wall or dropped through the bench.
 function settle(sim: FluidSim, world: RAPIER.World, hit: Hit, volume: number, mass: number, r: number, g: number, b: number, incoming: boolean) {
   if (hit.ny > 0.62) {
-    addPuddle(sim, hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, volume, mass, r, g, b);
+    addPuddle(sim, hit.x, hit.y, hit.z, volume, mass, r, g, b);
     return;
   }
   settleDown(sim, world, hit.x + hit.nx * 0.02, hit.y + hit.ny * 0.02, hit.z + hit.nz * 0.02, volume, mass, r, g, b, incoming);
@@ -696,11 +700,11 @@ function settleDown(
     return;
   }
   if (hit && hit.ny > 0.62 && hit.y > 0.05) {
-    addPuddle(sim, hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, volume, mass, r, g, b);
+    addPuddle(sim, hit.x, hit.y, hit.z, volume, mass, r, g, b);
     return;
   }
   const spot = visibleFloor(sim, world, hit ? hit.x : x, hit ? hit.z : z);
-  addPuddle(sim, spot.x, 0.012, spot.z, 0, 1, 0, volume, mass, r, g, b);
+  addPuddle(sim, spot.x, 0.012, spot.z, volume, mass, r, g, b);
 }
 
 // A floor puddle under a bench cannot be seen from above. Slide it out until the floor
@@ -801,7 +805,7 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
         continue;
       }
       if (ground && ground.ny > 0.62 && y1 - ground.y < 0.3) {
-        addPuddle(sim, ground.x, ground.y, ground.z, ground.nx, ground.ny, ground.nz, drop.volume, drop.mass, drop.r, drop.g, drop.b);
+        addPuddle(sim, ground.x, ground.y, ground.z, drop.volume, drop.mass, drop.r, drop.g, drop.b);
         sim.droplets.splice(i, 1);
         continue;
       }
@@ -830,9 +834,6 @@ function addPuddle(
   x: number,
   y: number,
   z: number,
-  nx: number,
-  ny: number,
-  nz: number,
   volume: number,
   mass: number,
   r: number,
@@ -840,43 +841,73 @@ function addPuddle(
   b: number,
 ) {
   if (volume <= 0) return;
-  tmp.set(nx, ny, nz);
-  if (tmp.lengthSq() < 1e-6) tmp.set(0, 1, 0);
-  tmp.normalize();
-  let closest: Puddle | null = null;
-  let closestD = Infinity;
-  for (const puddle of sim.puddles) {
-    if (puddle.volume <= 0) continue;
-    if (puddle.normal.dot(tmp) < 0.75) continue;
-    const d = Math.hypot(puddle.mesh.position.x - x, puddle.mesh.position.y - y, puddle.mesh.position.z - z);
-    const limit = PUDDLE_MERGE_GAP + puddleRadius(puddle.volume);
-    if (d < limit && d < closestD) {
-      closest = puddle;
-      closestD = d;
-    }
-  }
-  // A puddle stays where it formed and grows in place. Only when every slot is taken does
-  // a spill join a puddle it did not land on, and then the nearest one.
-  if (!closest) {
-    closest = sim.puddles.find((puddle) => puddle.volume <= 0) ?? null;
-    if (closest) {
-      closest.volume = 0;
-      closest.mass = 0;
-      closest.normal.copy(tmp);
-      closest.mesh.position.set(x, y, z).addScaledVector(tmp, 0.004);
-    } else {
-      closest = sim.puddles[0];
-      for (const puddle of sim.puddles) {
-        const d = puddle.mesh.position.distanceToSquared(tmp2.set(x, y, z));
-        if (d < closestD) {
-          closest = puddle;
-          closestD = d;
-        }
+  y += PUDDLE_LIFT;
+  let puddle = sim.puddles.find((entry) => entry.volume > 0 && touches(entry, x, y, z, 0)) ?? freeSlot(sim);
+  if (!puddle) puddle = nearestPuddle(sim, x, y, z);
+  if (puddle.volume <= 0) puddle.mesh.position.set(x, y, z);
+  pool(puddle, x, z, volume);
+  mixIn(puddle, r, g, b, mass, volume);
+}
+
+// A puddle's centre is the centre of its liquid, so what joins it pulls it that way.
+function pool(puddle: Puddle, x: number, z: number, volume: number) {
+  const p = puddle.mesh.position;
+  const w = volume / (puddle.volume + volume);
+  p.x += (x - p.x) * w;
+  p.z += (z - p.z) * w;
+  puddle.dirty = true;
+}
+
+function touches(puddle: Puddle, x: number, y: number, z: number, radius: number) {
+  const p = puddle.mesh.position;
+  if (Math.abs(p.y - y) > 0.02) return false;
+  return Math.hypot(p.x - x, p.z - z) < puddleRadius(puddle.volume) + radius + PUDDLE_MERGE_GAP;
+}
+
+function merge(into: Puddle, from: Puddle) {
+  pool(into, from.mesh.position.x, from.mesh.position.z, from.volume);
+  mixIn(into, from.r, from.g, from.b, from.mass, from.volume);
+  from.volume = 0;
+  from.mass = 0;
+  from.dirty = false;
+}
+
+// When every slot is taken, the two closest puddles on one surface become one.
+function freeSlot(sim: FluidSim): Puddle | null {
+  const empty = sim.puddles.find((entry) => entry.volume <= 0);
+  if (empty) return empty;
+  let best = Infinity;
+  let a: Puddle | null = null;
+  let b: Puddle | null = null;
+  for (let i = 0; i < sim.puddles.length; i++) {
+    const p = sim.puddles[i].mesh.position;
+    for (let j = i + 1; j < sim.puddles.length; j++) {
+      const q = sim.puddles[j].mesh.position;
+      if (Math.abs(p.y - q.y) > 0.02) continue;
+      const d = (p.x - q.x) ** 2 + (p.z - q.z) ** 2;
+      if (d < best) {
+        best = d;
+        a = sim.puddles[i];
+        b = sim.puddles[j];
       }
     }
   }
-  mixIn(closest, r, g, b, mass, volume);
-  closest.mesh.visible = true;
+  if (!a || !b) return null;
+  merge(a, b);
+  return b;
+}
+
+function nearestPuddle(sim: FluidSim, x: number, y: number, z: number) {
+  let nearest = sim.puddles[0];
+  let best = Infinity;
+  for (const puddle of sim.puddles) {
+    const d = puddle.mesh.position.distanceToSquared(tmp2.set(x, y, z));
+    if (d < best) {
+      best = d;
+      nearest = puddle;
+    }
+  }
+  return nearest;
 }
 
 // Liquid that strikes the outside of a vessel runs down past its wall rather than sitting
@@ -913,73 +944,76 @@ function runOff(
   );
 }
 
-// How far the surface under the puddle extends, so the disc stops at a table edge
-// instead of hanging past it.
-function supportRadius(sim: FluidSim, world: RAPIER.World, puddle: Puddle) {
-  const wanted = Math.max(0.012, puddleRadius(puddle.volume));
-  const n = puddle.normal;
+// Puddles that grow into each other become one, and a puddle wider than its surface
+// pours what it cannot hold over the edge. Each spill lands as a new change, so a few
+// passes let it settle.
+function spreadPuddles(sim: FluidSim, world: RAPIER.World) {
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (const puddle of sim.puddles) {
+      if (!puddle.dirty || puddle.volume <= 0) continue;
+      puddle.dirty = false;
+      changed = true;
+      const p = puddle.mesh.position;
+      for (const other of sim.puddles) {
+        if (other === puddle || other.volume <= 0) continue;
+        if (touches(other, p.x, p.y, p.z, puddleRadius(puddle.volume))) merge(puddle, other);
+      }
+      spill(sim, world, puddle);
+    }
+    if (!changed) return;
+  }
+}
+
+function spill(sim: FluidSim, world: RAPIER.World, puddle: Puddle) {
   const p = puddle.mesh.position;
-  tmp2.crossVectors(n, Math.abs(n.y) > 0.9 ? tmp3.set(1, 0, 0) : WORLD_UP).normalize();
-  tmp3.crossVectors(n, tmp2).normalize();
+  const wanted = puddleRadius(puddle.volume);
   let reach = wanted;
   let edgeX = 0;
-  let edgeY = 0;
   let edgeZ = 0;
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    const dx = tmp2.x * c + tmp3.x * s;
-    const dy = tmp2.y * c + tmp3.y * s;
-    const dz = tmp2.z * c + tmp3.z * s;
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const dx = Math.cos(angle);
+    const dz = Math.sin(angle);
+    if (!isDrop(sim, world, p.x + dx * wanted, p.y, p.z + dz * wanted)) continue;
     let lo = 0;
     let hi = wanted;
-    for (let step = 0; step < 5; step++) {
+    for (let step = 0; step < 6; step++) {
       const mid = (lo + hi) * 0.5;
-      if (onSurface(sim, world, p, n, dx, dy, dz, mid)) lo = mid;
-      else hi = mid;
+      if (isDrop(sim, world, p.x + dx * mid, p.y, p.z + dz * mid)) hi = mid;
+      else lo = mid;
     }
     if (lo < reach) {
       reach = lo;
       edgeX = dx;
-      edgeY = dy;
       edgeZ = dz;
     }
   }
-  return { reach: Math.max(0.006, reach - 0.004), edgeX, edgeY, edgeZ };
+  const capacity = Math.PI * reach * reach * PUDDLE_DEPTH;
+  const excess = puddle.volume - capacity;
+  if (excess <= 1e-9) return;
+  const mass = puddle.mass * (excess / puddle.volume);
+  puddle.volume = capacity;
+  puddle.mass -= mass;
+  const out = reach + 0.02;
+  settleDown(sim, world, p.x + edgeX * out, p.y + 0.02, p.z + edgeZ * out, excess, mass, puddle.r, puddle.g, puddle.b, false);
 }
 
-function onSurface(
-  sim: FluidSim,
-  world: RAPIER.World,
-  origin: THREE.Vector3,
-  normal: THREE.Vector3,
-  dx: number,
-  dy: number,
-  dz: number,
-  distance: number,
-) {
+// Only the fixed benches and floor shape a puddle. A beaker standing in one does not.
+function isDrop(sim: FluidSim, world: RAPIER.World, x: number, y: number, z: number) {
   const ray = sim.ray;
-  ray.origin.x = origin.x + dx * distance + normal.x * 0.04;
-  ray.origin.y = origin.y + dy * distance + normal.y * 0.04;
-  ray.origin.z = origin.z + dz * distance + normal.z * 0.04;
-  ray.dir.x = -normal.x;
-  ray.dir.y = -normal.y;
-  ray.dir.z = -normal.z;
-  const hit = world.castRayAndGetNormal(ray, 0.08, true, 0 as RAPIER.QueryFilterFlags, RAY_GROUPS);
-  if (!hit) return false;
-  const nx = hit.normal.x;
-  const ny = hit.normal.y;
-  const nz = hit.normal.z;
-  if (nx * normal.x + ny * normal.y + nz * normal.z < 0.85) return false;
-  const px = ray.origin.x + ray.dir.x * hit.timeOfImpact - origin.x;
-  const py = ray.origin.y + ray.dir.y * hit.timeOfImpact - origin.y;
-  const pz = ray.origin.z + ray.dir.z * hit.timeOfImpact - origin.z;
-  return Math.abs(px * normal.x + py * normal.y + pz * normal.z) < 0.012;
+  ray.origin.x = x;
+  ray.origin.y = y + 0.02;
+  ray.origin.z = z;
+  ray.dir.x = 0;
+  ray.dir.y = -1;
+  ray.dir.z = 0;
+  const hit = world.castRay(ray, 0.1, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, RAY_GROUPS);
+  return !hit || ray.origin.y - hit.timeOfImpact < y - 0.03;
 }
 
 function puddleRadius(volume: number) {
-  return Math.min(0.2, Math.sqrt(volume / (Math.PI * 0.0025)));
+  return Math.sqrt(volume / (Math.PI * PUDDLE_DEPTH));
 }
 
 function scoopPuddles(sim: FluidSim) {
@@ -1110,26 +1144,14 @@ function writeDroplets(sim: FluidSim) {
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 }
 
-function writePuddles(sim: FluidSim, world: RAPIER.World) {
+function writePuddles(sim: FluidSim) {
   for (const puddle of sim.puddles) {
     if (puddle.volume <= 0) {
       puddle.mesh.visible = false;
       continue;
     }
-    const wanted = Math.max(0.012, puddleRadius(puddle.volume));
-    let support = supportRadius(sim, world, puddle);
-    const overhang = wanted - support.reach;
-    if (overhang > 0.004) {
-      const step = Math.min(overhang, 0.04);
-      puddle.mesh.position.x -= support.edgeX * step;
-      puddle.mesh.position.y -= support.edgeY * step;
-      puddle.mesh.position.z -= support.edgeZ * step;
-      support = supportRadius(sim, world, puddle);
-    }
-    const radius = Math.min(wanted, support.reach);
     puddle.mesh.visible = true;
-    puddle.mesh.scale.setScalar(radius);
-    puddle.mesh.quaternion.setFromUnitVectors(WORLD_UP, puddle.normal);
+    puddle.mesh.scale.setScalar(Math.max(0.006, puddleRadius(puddle.volume)));
     const mat = puddle.mesh.material as THREE.MeshStandardMaterial;
     tint(puddle, mat.color);
     mat.color.multiplyScalar(0.82);

@@ -205,10 +205,13 @@ check(
 }
 
 {
+  const onFloor = () =>
+    sim.puddles.filter((entry) => entry.volume > 0 && entry.mesh.position.y < 0.05).reduce((sum, entry) => sum + entry.volume, 0);
+  const floorBefore = onFloor();
   const puddle = sim.puddles.find((entry) => entry.volume <= 0);
   puddle.volume = 0.002;
   puddle.mass = 0;
-  puddle.normal.set(0, 1, 0);
+  puddle.dirty = true;
   puddle.mesh.position.set(0.72, 0.939, 0.15);
   fluid.updateFluid(sim, world, 1 / 60);
   const radius = puddle.mesh.scale.x;
@@ -220,6 +223,55 @@ check(
     "a puddle stays on the bench",
     edge < 0.01 && radius > 0.02,
     `radius=${radius.toFixed(3)} overhang=${edge.toFixed(3)}`,
+  );
+  const x = puddle.mesh.position.x;
+  const z = puddle.mesh.position.z;
+  for (let i = 0; i < 30; i++) fluid.updateFluid(sim, world, 1 / 60);
+  check(
+    "a puddle at the edge holds still",
+    Math.abs(puddle.mesh.position.x - x) < 1e-6 && Math.abs(puddle.mesh.position.z - z) < 1e-6,
+    `moved=${(puddle.mesh.position.x - x).toFixed(4)},${(puddle.mesh.position.z - z).toFixed(4)}`,
+  );
+  const spilled = onFloor() - floorBefore;
+  check(
+    "what the bench cannot hold spills to the floor",
+    spilled > 0.001 && Math.abs(spilled + puddle.volume - 0.002) < 1e-4,
+    `floor=${spilled.toExponential(3)} bench=${puddle.volume.toExponential(3)}`,
+  );
+}
+
+{
+  // Drips along a trail: puddles join rather than stack, and what shows matches what spilled.
+  for (const entry of sim.puddles) {
+    entry.volume = 0;
+    entry.mass = 0;
+  }
+  sim.droplets.length = 0;
+  const drops = 200;
+  const each = 0.000004;
+  for (let i = 0; i < drops; i++) {
+    sim.droplets.push({
+      x: -0.5 + i * 0.004, y: 1.0, z: -0.1, vx: 0, vy: -0.5, vz: 0,
+      volume: each, mass: 0, r: 0, g: 0, b: 1, age: 0, bounces: 0, ignore: null,
+    });
+    fluid.updateFluid(sim, world, 1 / 60);
+  }
+  for (let i = 0; i < 30; i++) fluid.updateFluid(sim, world, 1 / 60);
+  const live = sim.puddles.filter((entry) => entry.volume > 0);
+  const shown = live.reduce((sum, entry) => sum + Math.PI * entry.mesh.scale.x ** 2 * 0.0025, 0);
+  let overlaps = 0;
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const a = live[i].mesh;
+      const b = live[j].mesh;
+      if (Math.abs(a.position.y - b.position.y) > 0.02) continue;
+      if (Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z) < a.scale.x + b.scale.x) overlaps += 1;
+    }
+  }
+  check(
+    "puddle area matches the volume spilled, with no stacked discs",
+    overlaps === 0 && Math.abs(shown - drops * each) / (drops * each) < 0.05,
+    `puddles=${live.length} overlaps=${overlaps} shown=${shown.toExponential(3)} spilled=${(drops * each).toExponential(3)}`,
   );
 }
 
