@@ -47,9 +47,9 @@ export function createLab(scene: THREE.Scene, world: RAPIER.World): Beaker[] {
 
   const surface = topY + 0.035;
   return [
-    addBeaker(scene, world, 0xe23b2f, -0.32, surface, -0.28, 0.72),
-    addBeaker(scene, world, 0x2f8f4e, 0.02, surface, -0.12, 0.5),
-    addBeaker(scene, world, 0x2d6fdb, 0.34, surface, -0.3, 0.64),
+    addBeaker(scene, world, 0xe23b2f, -0.3, surface, 0.0, 0.72),
+    addBeaker(scene, world, 0x2f8f4e, 0.02, surface, 0.06, 0.5),
+    addBeaker(scene, world, 0x2d6fdb, 0.32, surface, -0.04, 0.64),
   ];
 }
 

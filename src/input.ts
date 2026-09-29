@@ -3,6 +3,7 @@ export const input = {
   lookX: 0,
   lookY: 0,
   pourX: 0,
+  reach: 0,
   space: false,
   toggleLeft: false,
   toggleRight: false,
@@ -61,6 +62,14 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       input.lookY += event.movementY;
     }
   });
+
+  document.addEventListener(
+    "wheel",
+    (event) => {
+      if (input.playing) input.reach += event.deltaY;
+    },
+    { passive: true },
+  );
 
   const pressedAt = [0, 0, 0];
   const lastTap = [0, 0, 0];

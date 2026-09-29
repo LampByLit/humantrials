@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { bindInput } from "./input";
+import { bindInput, input } from "./input";
 import { createPlayer, updatePlayer } from "./player";
+import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createHands, updateHands } from "./hands";
 import { createHold, updateHold } from "./hold";
@@ -50,9 +51,14 @@ pmrem.dispose();
 
 const player = createPlayer(scene, world, camera);
 const hands = await createHands(player, world);
+const reach = createReach(hands, player);
 const beakers = createLab(scene, world);
 const hold = createHold();
 const fluid = createFluid(scene, beakers, envMap, sun.position);
+
+if (import.meta.env.DEV) {
+  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world } });
+}
 
 const grounded = { value: true };
 const verticalVelocity = { value: 0 };
@@ -71,6 +77,7 @@ function frame(now: number) {
 
   world.integrationParameters.dt = dt;
   updatePlayer(player, world, dt, grounded, verticalVelocity);
+  updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
   updateHands(hands, dt);
   updateHold(hold, hands, beakers, dt);
