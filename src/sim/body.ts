@@ -95,6 +95,51 @@ export function administerInjected(input: Solution, volumeDrawn: number): { dose
   };
 }
 
+export type PendingDose = {
+  hex: string;
+  mass: number;
+  left: number;
+};
+
+export type Blood = {
+  pending: PendingDose[];
+  doses: Dose[];
+};
+
+export function createBlood(): Blood {
+  return { pending: [], doses: [] };
+}
+
+export function swallow(blood: Blood, dose: { hex: string; mass: number }) {
+  const mass = dose.mass * config.routes.oral.bioavailability;
+  if (mass <= 1e-8) return;
+  blood.pending.push({ hex: dose.hex, mass, left: config.routes.oral.onset });
+}
+
+export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
+  const liver = body.organs.find((organ) => organ.name === "liver");
+  const rate = clearanceRate(liver);
+  for (const dose of blood.doses) dose.mass *= Math.exp(-rate * dt);
+  blood.doses = blood.doses.filter((dose) => dose.mass > 1e-5);
+
+  for (let i = blood.pending.length - 1; i >= 0; i--) {
+    blood.pending[i].left -= dt;
+    if (blood.pending[i].left > 0) continue;
+    blood.doses.push({ hex: blood.pending[i].hex, mass: blood.pending[i].mass });
+    blood.pending.splice(i, 1);
+  }
+
+  const next = evaluate(body.organs, blood.doses);
+  body.organs = next.organs;
+  return next.symptoms;
+}
+
+function clearanceRate(liver: Organ | undefined) {
+  if (!liver) return config.clearance.floor;
+  const rate = config.clearance.k0 * (1 + 0.5 * liver.deflection) * (0.3 + 0.7 * liver.integrity);
+  return Math.max(config.clearance.floor, rate);
+}
+
 export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { organs: Organ[]; symptoms: Symptom[] } {
   const next = organs.map((organ) => {
     let totalDrive = 0;

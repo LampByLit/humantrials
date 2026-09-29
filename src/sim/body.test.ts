@@ -5,9 +5,12 @@ import { drive } from "./effect";
 import {
   administerInjected,
   capacity,
+  createBlood,
   createBody,
   evaluate,
   sensitivity,
+  stepBody,
+  swallow,
   symptomsFrom,
   type Organ,
 } from "./body";
@@ -113,5 +116,27 @@ describe("body", () => {
     expect(capacity(0.4)).toBe(0.4);
     const compound = derive("#00FF00");
     expect(drive(compound, { theta: 120, k: config.tuning.k }, 0.4)).toBeGreaterThan(0);
+  });
+
+  it("holds a swallowed dose until onset, then clears it above the floor", () => {
+    const body = { organs: [organ("heart", 0), organ("brain", 120), organ("liver", 240)] };
+    const blood = createBlood();
+    swallow(blood, { hex: "#FF0000", mass: 2 });
+    expect(blood.pending[0].mass).toBeCloseTo(2 * config.routes.oral.bioavailability, 8);
+    stepBody(body, blood, 0);
+    expect(body.organs[0].deflection).toBe(0);
+    stepBody(body, blood, config.routes.oral.onset);
+    expect(blood.pending).toHaveLength(0);
+    expect(body.organs[0].deflection).toBeGreaterThan(config.symptoms.mild);
+    const entered = blood.doses[0].mass;
+    stepBody(body, blood, 1);
+    expect(blood.doses[0].mass).toBeLessThan(entered);
+    expect(blood.doses[0].mass).toBeGreaterThan(entered * Math.exp(-1));
+
+    const wrecked = { organs: [organ("heart", 0), organ("brain", 120), organ("liver", 240, -1, 0)] };
+    const held = createBlood();
+    held.doses.push({ hex: "#FF0000", mass: 1 });
+    stepBody(wrecked, held, 1);
+    expect(held.doses[0].mass).toBeCloseTo(Math.exp(-config.clearance.floor), 5);
   });
 });

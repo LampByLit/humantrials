@@ -117,6 +117,26 @@ check("tilted beaker loses liquid", source.solution.volume < start * 0.85, `left
 const landed = arc[arc.length - 1];
 check("stream hits a surface", !!landed && landed.y > 0.5, landed ? `end=${landed.y}` : "no arc");
 
+fluid.updateFluid(sim, world, 1 / 60, source);
+const aim = sim.aim.position;
+const aimGap = Math.hypot(aim.x - landed.x, aim.y - landed.y, aim.z - landed.z);
+check(
+  "pour aim sits on the landing",
+  sim.aim.visible && aimGap < 0.02 && sim.aim.material.color.getHex() === 0xff2424,
+  `gap=${aimGap.toFixed(4)} visible=${sim.aim.visible}`,
+);
+source.solution.volume = start;
+let dim = 1;
+let bright = 0;
+for (let i = 0; i < 120; i++) {
+  fluid.updateFluid(sim, world, 1 / 60, source);
+  if (!sim.aim.visible) continue;
+  dim = Math.min(dim, sim.aim.material.opacity);
+  bright = Math.max(bright, sim.aim.material.opacity);
+}
+check("pour aim blinks", bright - dim > 0.5, `opacity ${dim.toFixed(2)}..${bright.toFixed(2)}`);
+check("poured volume accumulates while aiming", sim.poured > 1e-6, `poured=${sim.poured.toExponential(3)}`);
+
 if (spot) {
   source.solution.volume = start;
   source.solution.mass = startMass;
@@ -272,6 +292,75 @@ check(
     "puddle area matches the volume spilled, with no stacked discs",
     overlaps === 0 && Math.abs(shown - drops * each) / (drops * each) < 0.05,
     `puddles=${live.length} overlaps=${overlaps} shown=${shown.toExponential(3)} spilled=${(drops * each).toExponential(3)}`,
+  );
+}
+
+check("poured volume clears when the pour ends", sim.poured === 0, `poured=${sim.poured}`);
+
+{
+  const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 1.05);
+  const cup = beakers.find((beaker) => Math.abs(beaker.height - 0.09) < 1e-6 && beaker !== source);
+  const tray = beakers.find((beaker) => beaker.height < 0.04);
+  const aimInto = (vessel) => {
+    vessel.body.setGravityScale(0, true);
+    vessel.body.setTranslation({ x: 2.6, y: 0.8, z: -2.6 }, true);
+    vessel.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    vessel.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    vessel.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    const at = vessel.body.translation();
+    source.solution.volume = 0.0002;
+    source.body.setGravityScale(0, true);
+    source.body.setTranslation({ x: at.x + 0.05, y: at.y + vessel.height / 2 + 0.16, z: at.z }, true);
+    source.body.setRotation(tilt, true);
+    source.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    source.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    world.step();
+    fluid.updateFluid(sim, world, 1 / 60, source);
+    const p = vessel.body.translation();
+    const bottom = p.y - vessel.height / 2;
+    const mouth = p.y + vessel.height / 2;
+    return { bottom, mouth, y: sim.aim.position.y, visible: sim.aim.visible, x: sim.aim.position.x, z: sim.aim.position.z, vx: p.x, vz: p.z };
+  };
+  const cupped = aimInto(cup);
+  check(
+    "pour aim sits on a beaker bottom",
+    cupped.visible && cupped.y < cupped.mouth - 0.02 && Math.abs(cupped.y - cupped.bottom) < 0.03,
+    `y=${cupped.y.toFixed(3)} bottom=${cupped.bottom.toFixed(3)} mouth=${cupped.mouth.toFixed(3)}`,
+  );
+  const dished = aimInto(tray);
+  check(
+    "pour aim sits on a tray bottom",
+    dished.visible && dished.y < dished.mouth - 0.005 && Math.abs(dished.y - dished.bottom) < 0.02,
+    `y=${dished.y.toFixed(3)} bottom=${dished.bottom.toFixed(3)} mouth=${dished.mouth.toFixed(3)}`,
+  );
+  source.solution.volume = 0.0002;
+  source.body.setTranslation({ x: 3.2, y: 0.55, z: 3.2 }, true);
+  source.body.setRotation(tilt, true);
+  source.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  source.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  world.step();
+  fluid.updateFluid(sim, world, 1 / 60, source);
+  check(
+    "pour aim sits on the floor",
+    sim.aim.visible && sim.aim.position.y < 0.03,
+    `y=${sim.aim.position.y.toFixed(3)}`,
+  );
+}
+
+{
+  source.solution.volume = 0.00015;
+  source.solution.mass = 1.5;
+  source.body.setTranslation({ x: 0, y: 1.2, z: 0 }, true);
+  source.body.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 1.05), true);
+  source.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  source.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  world.step();
+  const before = source.solution.volume;
+  fluid.updateFluid(sim, world, 1 / 60, null, { x: -0.02, y: 1.0, z: 0, half: 0.35, radius: 0.3 });
+  check(
+    "a pour that hits the body is swallowed",
+    sim.drunk.volume > 0 && sim.drunk.mass > 0 && source.solution.volume < before,
+    `drunk=${sim.drunk.volume.toExponential(3)} left=${source.solution.volume.toExponential(3)}`,
   );
 }
 

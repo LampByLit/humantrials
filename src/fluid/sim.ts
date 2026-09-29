@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { Beaker } from "../lab";
-import { massIn, mixIn, type Solution } from "./solution";
+import { massIn, mixIn, water, type Solution } from "./solution";
 import { lowestRim, pourFlow, solveSurface, type Vec3 } from "./volume";
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -19,6 +19,7 @@ const PUDDLE_COUNT = 48;
 const PUDDLE_MERGE_GAP = 0.015;
 const PUDDLE_DEPTH = 0.0025;
 const PUDDLE_LIFT = 0.004;
+const AIM_RADIUS = 0.006;
 
 type Droplet = {
   x: number;
@@ -70,6 +71,8 @@ type Vessel = {
   outM: number;
 };
 
+export type Capsule = { x: number; y: number; z: number; half: number; radius: number };
+
 export type FluidSim = {
   vessels: Vessel[];
   droplets: Droplet[];
@@ -77,6 +80,12 @@ export type FluidSim = {
   puddles: Puddle[];
   pending: Pending[];
   ray: RAPIER.Ray;
+  aim: THREE.Mesh;
+  aimTime: number;
+  poured: number;
+  pourBeaker: Beaker | null;
+  drunk: Solution;
+  drinker: Capsule | null;
 };
 
 const tmp = new THREE.Vector3();
@@ -125,6 +134,23 @@ export function createFluid(
 
   const vessels = beakers.map((beaker) => createVessel(scene, beaker, circle, envMap, light));
   const puddles = Array.from({ length: PUDDLE_COUNT }, () => createPuddle(scene, envMap));
+  const aim = new THREE.Mesh(
+    new THREE.SphereGeometry(AIM_RADIUS, 16, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xff2424,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      toneMapped: false,
+      fog: false,
+    }),
+  );
+  aim.visible = false;
+  aim.frustumCulled = false;
+  aim.renderOrder = 6;
+  aim.castShadow = false;
+  aim.receiveShadow = false;
+  scene.add(aim);
 
   return {
     vessels,
@@ -133,11 +159,26 @@ export function createFluid(
     puddles,
     pending: [],
     ray: new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }),
+    aim,
+    aimTime: 0,
+    poured: 0,
+    pourBeaker: null,
+    drunk: water(0),
+    drinker: null,
   };
 }
 
-export function updateFluid(sim: FluidSim, world: RAPIER.World, dt: number) {
+export function updateFluid(
+  sim: FluidSim,
+  world: RAPIER.World,
+  dt: number,
+  aim: Beaker | null = null,
+  drinker: Capsule | null = null,
+) {
   const step = Math.min(dt, 0.05);
+  sim.drinker = drinker;
+  sim.drunk.mass = 0;
+  sim.drunk.volume = 0;
   for (const vessel of sim.vessels) {
     vessel.incoming.mass = 0;
     vessel.incoming.volume = 0;
@@ -162,6 +203,13 @@ export function updateFluid(sim: FluidSim, world: RAPIER.World, dt: number) {
   }
   writeDroplets(sim);
   writePuddles(sim);
+  if (aim !== sim.pourBeaker) sim.poured = 0;
+  sim.pourBeaker = aim;
+  if (aim) {
+    const held = sim.vessels.find((entry) => entry.beaker === aim);
+    if (held) sim.poured += held.outV;
+  }
+  updateAim(sim, world, aim, step);
 }
 
 function createVessel(
@@ -478,6 +526,29 @@ function traceStream(
   b: number,
   overflow: number,
 ) {
+  const end = walkStream(sim, world, vessel, overflow, (x, y, z) => pushPoint(vessel, x, y, z));
+  if (end.swallowed) {
+    mixIn(sim.drunk, r, g, b, mass, amount);
+    return;
+  }
+  if (end.hit) {
+    if (end.hit.beaker) receive(sim, end.hit.beaker, r, g, b, mass, amount);
+    else if (end.hit.prop) runOff(sim, world, end.hit.prop, end.hit, { volume: amount, mass, r, g, b }, true);
+    else settle(sim, world, end.hit, amount, mass, r, g, b, true);
+    return;
+  }
+  settleDown(sim, world, end.x, end.y, end.z, amount, mass, r, g, b, true);
+}
+
+// The same arc the stream follows, without moving liquid. The pour marker uses it so the
+// dot sits where the liquid will land.
+function walkStream(
+  sim: FluidSim,
+  world: RAPIER.World,
+  vessel: Vessel,
+  overflow: number,
+  onPoint: ((x: number, y: number, z: number) => void) | null,
+): { hit: Hit | null; swallowed: boolean; x: number; y: number; z: number } {
   const launch = lipLaunch(vessel, overflow);
   let x = launch.x;
   let y = launch.y;
@@ -485,9 +556,9 @@ function traceStream(
   let vx = launch.vx;
   let vy = launch.vy;
   let vz = launch.vz;
-  pushPoint(vessel, x, y, z);
+  onPoint?.(x, y, z);
+  if (insideDrinker(sim, x, y, z)) return { hit: null, swallowed: true, x, y, z };
   const gravity = world.gravity;
-  let traveled = 0;
 
   for (let i = 0; i < MAX_RINGS - 1; i++) {
     const h = 0.016;
@@ -500,27 +571,16 @@ function traceStream(
     // The stream leaves its own vessel, so the vessel's body must not catch it. A wide
     // tray's wall stays in range far past the lip, and catching it there sends the pour
     // back onto the tray.
-    const hit = segmentHit(
-      sim,
-      world,
-      vessel.beaker,
-      x,
-      y,
-      z,
-      nx,
-      ny,
-      nz,
-      vessel.beaker.body,
-    );
-    if (hit) {
-      pushPoint(vessel, hit.x, hit.y, hit.z);
-      if (hit.beaker) receive(sim, hit.beaker, r, g, b, mass, amount);
-      else if (hit.prop) runOff(sim, world, hit.prop, hit, { volume: amount, mass, r, g, b }, true);
-      else settle(sim, world, hit, amount, mass, r, g, b, true);
-      return;
+    if (insideDrinker(sim, nx, ny, nz)) {
+      onPoint?.(nx, ny, nz);
+      return { hit: null, swallowed: true, x: nx, y: ny, z: nz };
     }
-    pushPoint(vessel, nx, ny, nz);
-    traveled += Math.hypot(nx - x, ny - y, nz - z);
+    const hit = segmentHit(sim, world, vessel.beaker, x, y, z, nx, ny, nz, vessel.beaker.body);
+    if (hit) {
+      onPoint?.(hit.x, hit.y, hit.z);
+      return { hit, swallowed: false, x: hit.x, y: hit.y, z: hit.z };
+    }
+    onPoint?.(nx, ny, nz);
     x = nx;
     y = ny;
     z = nz;
@@ -529,7 +589,98 @@ function traceStream(
     vz = nvz;
   }
 
-  settleDown(sim, world, x, y, z, amount, mass, r, g, b, true);
+  return { hit: null, swallowed: false, x, y, z };
+}
+
+function insideDrinker(sim: FluidSim, x: number, y: number, z: number) {
+  const drinker = sim.drinker;
+  if (!drinker) return false;
+  const dy = y - drinker.y;
+  const along = Math.max(-drinker.half, Math.min(drinker.half, dy));
+  const ox = x - drinker.x;
+  const oy = dy - along;
+  const oz = z - drinker.z;
+  return ox * ox + oy * oy + oz * oz <= drinker.radius * drinker.radius;
+}
+
+function updateAim(sim: FluidSim, world: RAPIER.World, beaker: Beaker | null, dt: number) {
+  sim.aimTime += dt;
+  const mesh = sim.aim;
+  const vessel = beaker ? sim.vessels.find((entry) => entry.beaker === beaker) : undefined;
+  if (!vessel) {
+    mesh.visible = false;
+    return;
+  }
+  const held = vessel.beaker;
+  const { rotation } = poseOf(held);
+  const up = localUpOf(vessel, rotation, localUp);
+  const surface = solveSurface(up, held.solution.volume, held.radius, held.height / 2);
+  const end = walkStream(sim, world, vessel, surface.overflow, null);
+  const spot = restingSpot(sim, world, end.hit, end.x, end.y, end.z);
+  if (!spot) {
+    mesh.visible = false;
+    return;
+  }
+  const lift = AIM_RADIUS + 0.003;
+  mesh.position.set(spot.x + spot.nx * lift, spot.y + spot.ny * lift, spot.z + spot.nz * lift);
+  mesh.visible = true;
+  const wave = 0.5 + 0.5 * Math.sin(sim.aimTime * 3.2);
+  (mesh.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.75 * wave;
+}
+
+type Spot = { x: number; y: number; z: number; nx: number; ny: number; nz: number };
+
+// Where the pour comes to rest: the inside floor of a vessel it falls into, or the bench
+// or floor under anything else. Walls and rims are not resting places.
+function restingSpot(sim: FluidSim, world: RAPIER.World, hit: Hit | null, x: number, y: number, z: number): Spot | null {
+  if (!hit) return dropToSurface(sim, world, x, y, z, 0);
+  if (hit.beaker) return interiorFloor(hit.beaker, hit.x, hit.y, hit.z);
+  if (hit.prop && overOpening(hit.prop, hit.x, hit.y, hit.z)) return interiorFloor(hit.prop, hit.x, hit.y, hit.z);
+  if (hit.ny > 0.62) return { x: hit.x, y: hit.y, z: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz };
+  return dropToSurface(sim, world, hit.x + hit.nx * 0.02, hit.y + hit.ny * 0.02, hit.z + hit.nz * 0.02, 0);
+}
+
+function dropToSurface(sim: FluidSim, world: RAPIER.World, x: number, y: number, z: number, depth: number): Spot {
+  const hit = segmentHit(sim, world, null, x, y, z, x, y - 4, z, undefined);
+  if (hit?.beaker) return interiorFloor(hit.beaker, hit.x, hit.y, hit.z);
+  if (hit?.prop && overOpening(hit.prop, hit.x, hit.y, hit.z)) return interiorFloor(hit.prop, hit.x, hit.y, hit.z);
+  if (hit?.prop && depth < 6) return dropToSurface(sim, world, x, hit.y - 0.03, z, depth + 1);
+  if (hit && hit.ny > 0.62) return { x: hit.x, y: hit.y, z: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz };
+  const floor = visibleFloor(sim, world, hit ? hit.x : x, hit ? hit.z : z);
+  return { x: floor.x, y: 0, z: floor.z, nx: 0, ny: 1, nz: 0 };
+}
+
+function interiorFloor(beaker: Beaker, x: number, y: number, z: number): Spot {
+  const p = beaker.body.translation();
+  const rotation = beaker.body.rotation();
+  quat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+  axisV.set(0, 1, 0).applyQuaternion(quat);
+  const inset = beaker.height / 2 - 0.004;
+  const bx = p.x - axisV.x * inset;
+  const by = p.y - axisV.y * inset;
+  const bz = p.z - axisV.z * inset;
+  const along = (x - bx) * axisV.x + (y - by) * axisV.y + (z - bz) * axisV.z;
+  let rx = x - axisV.x * along - bx;
+  let ry = y - axisV.y * along - by;
+  let rz = z - axisV.z * along - bz;
+  const rad = Math.hypot(rx, ry, rz);
+  const limit = beaker.radius * 0.72;
+  if (rad > limit && rad > 1e-8) {
+    const scale = limit / rad;
+    rx *= scale;
+    ry *= scale;
+    rz *= scale;
+  }
+  return { x: bx + rx, y: by + ry, z: bz + rz, nx: axisV.x, ny: axisV.y, nz: axisV.z };
+}
+
+function overOpening(beaker: Beaker, x: number, y: number, z: number) {
+  const p = beaker.body.translation();
+  const rotation = beaker.body.rotation();
+  inv.set(rotation.x, rotation.y, rotation.z, rotation.w).invert();
+  tmp3.set(x - p.x, y - p.y, z - p.z).applyQuaternion(inv);
+  const limit = beaker.radius * MOUTH_SCALE;
+  return tmp3.x * tmp3.x + tmp3.z * tmp3.z <= limit * limit;
 }
 
 type Hit = {
@@ -769,6 +920,11 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
   for (let i = sim.droplets.length - 1; i >= 0; i--) {
     const drop = sim.droplets[i];
     drop.age += dt;
+    if (insideDrinker(sim, drop.x, drop.y, drop.z)) {
+      mixIn(sim.drunk, drop.r, drop.g, drop.b, drop.mass, drop.volume);
+      sim.droplets.splice(i, 1);
+      continue;
+    }
     const x1 = drop.x + drop.vx * dt;
     const y1 = drop.y + drop.vy * dt + 0.5 * gravity.y * dt * dt;
     const z1 = drop.z + drop.vz * dt;

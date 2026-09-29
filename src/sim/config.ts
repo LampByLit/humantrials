@@ -16,6 +16,14 @@ export const config = {
     injected: {
       bioavailability: 1,
     },
+    oral: {
+      bioavailability: 0.6,
+      onset: 4,
+    },
+  },
+  clearance: {
+    k0: 0.12,
+    floor: 0.03,
   },
   balance: {
     cleanRatio: 2,

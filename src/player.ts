@@ -7,7 +7,9 @@ const MOVE_SPEED = 2.3;
 const SLOW_MOVE = 0.35;
 const LOOK_SENS = 0.0022;
 const PITCH_MIN = -1.15;
-const PITCH_MAX = 0.7;
+const PITCH_MAX = 1.05;
+// Drinking is looking up to the stop and pouring onto yourself.
+export const DRINK_PITCH = 0.9;
 const CAPSULE_HALF = 0.58;
 const CAPSULE_RADIUS = 0.22;
 const CAPSULE_CENTER = CAPSULE_HALF + CAPSULE_RADIUS;
@@ -64,6 +66,11 @@ export function createPlayer(
     collider,
     controller,
   };
+}
+
+export function playerCapsule(player: Player) {
+  const at = player.body.translation();
+  return { x: at.x, y: at.y, z: at.z, half: CAPSULE_HALF, radius: CAPSULE_RADIUS };
 }
 
 export function updatePlayer(player: Player, world: RAPIER.World, dt: number, grounded: { value: boolean }, verticalVelocity: { value: number }) {

@@ -58,8 +58,11 @@ export function updateReach(reach: Reach, hands: Hands, player: Player, dt: numb
 function place(reach: Reach, hands: Hands, player: Player, blend: number) {
   const arc = (player.pitch - REST_PITCH) * ARC_GAIN;
   const distance = reach.distance + DOWN_REACH * Math.max(0, -Math.sin(arc));
+  // Past the top of the arc the hand would swing behind the head. Keep it in front so a
+  // beaker tipped while looking up pours onto the player.
+  const ahead = Math.min(-0.16, -Math.cos(arc) * distance);
   target
-    .set(0, Math.sin(arc) * distance, -Math.cos(arc) * distance)
+    .set(0, Math.sin(arc) * distance, ahead)
     .add(reach.shoulder)
     .sub(reach.wristOffset);
   hands.model.position.lerp(target, blend);

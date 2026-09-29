@@ -14,11 +14,85 @@ canvas {
   height: 100%;
 }
 
-#hud {
+#pour {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, calc(-100% - 12px));
+  display: none;
+  padding: 6px 12px;
+  background: rgba(8, 10, 12, 0.55);
+  border-radius: 6px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+#pour.show {
+  display: block;
+}
+
+#health {
   position: fixed;
   left: 16px;
   bottom: 16px;
-  max-width: 420px;
+  width: 250px;
+  padding: 10px 12px;
+  background: rgba(8, 10, 12, 0.55);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+#health .organ {
+  margin-top: 8px;
+}
+
+#health .organ:first-child {
+  margin-top: 0;
+}
+
+#health .name {
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+#health .track {
+  position: relative;
+  height: 6px;
+  margin: 4px 0;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+}
+
+#health .mark {
+  position: absolute;
+  top: -2px;
+  width: 3px;
+  height: 10px;
+  background: #f2efe6;
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+#health .meta {
+  opacity: 0.75;
+}
+
+#health .pending {
+  margin-top: 8px;
+  opacity: 0.85;
+}
+
+#hud {
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 260px;
   padding: 10px 12px;
   background: rgba(8, 10, 12, 0.55);
   border-radius: 6px;
@@ -43,11 +117,3 @@ canvas {
   display: none;
 }
 
-#credit {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  font-size: 12px;
-  opacity: 0.55;
-  pointer-events: none;
-}
