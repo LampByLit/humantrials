@@ -252,7 +252,7 @@ const tipQuaternion = new THREE.Quaternion();
 
 export function updateHands(hands: Hands, dt: number) {
   if (input.toggle) {
-    hands.arm.raised = !hands.arm.raised;
+    input.gripLocked = !input.gripLocked;
     input.toggle = false;
   }
 
@@ -268,7 +268,7 @@ export function updateHands(hands: Hands, dt: number) {
   input.pourX = 0;
   input.pourY = 0;
 
-  poseArm(hands.arm, hands.pourRoll, dt, input.squeeze);
+  poseArm(hands.arm, hands.pourRoll, dt, input.squeeze || input.gripLocked);
   hands.model.updateMatrixWorld(true);
   syncArm(hands.arm);
 }

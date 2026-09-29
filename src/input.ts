@@ -7,6 +7,7 @@ export const input = {
   reach: 0,
   space: false,
   toggle: false,
+  gripLocked: false,
   squeeze: false,
   locked: false,
   playing: false,
@@ -21,6 +22,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       input.keys.clear();
       input.space = false;
       input.squeeze = false;
+      input.gripLocked = false;
     }
   };
 
