@@ -5,7 +5,7 @@ import type { Player } from "./player";
 
 // The arms hang off the body rather than the camera: looking up or down swings the hands
 // along an arc around the shoulder, and the wheel extends or pulls in the reach. The hands
-// keep a level orientation so looking around never tips a held beaker; only the pour roll does.
+// keep a level orientation so looking around never tips a held beaker; only the pour does.
 const SHOULDER_DROP = 0.2;
 const REST_PITCH = -0.28;
 const ARC_GAIN = 1.25;

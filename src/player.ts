@@ -4,7 +4,7 @@ import { input } from "./input";
 
 const EYE_HEIGHT = 1.58;
 const MOVE_SPEED = 2.3;
-const SLOW_MOVE = 0.35;
+const SLOW_MOVE = 0.08;
 const LOOK_SENS = 0.0022;
 const PITCH_MIN = -1.15;
 const PITCH_MAX = 1.05;
@@ -75,8 +75,9 @@ export function playerCapsule(player: Player) {
 
 export function updatePlayer(player: Player, world: RAPIER.World, dt: number, grounded: { value: boolean }, verticalVelocity: { value: number }) {
   if (input.locked && input.playing && !input.space) {
-    player.yaw -= input.lookX * LOOK_SENS;
-    player.pitch -= input.lookY * LOOK_SENS;
+    const lookSens = LOOK_SENS * (input.slow() ? SLOW_MOVE : 1);
+    player.yaw -= input.lookX * lookSens;
+    player.pitch -= input.lookY * lookSens;
     player.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, player.pitch));
   }
   input.lookX = 0;

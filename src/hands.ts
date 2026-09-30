@@ -8,7 +8,7 @@ const MODEL_URL = "/models/fps-arm-rig.glb";
 const MODEL_SCALE = 0.0046;
 const POUR_SENS = 0.007;
 const POUR_LIMIT = 1.15;
-const SLOW_POUR = 0.3;
+const SLOW_POUR = 0.08;
 const HAND_LERP = 9;
 const SQUEEZE_LERP = 18;
 const DROP_ANGLE = 1.35;
@@ -18,6 +18,8 @@ const DROP_ANGLE = 1.35;
 // fingertips settle on the glass rather than driving through it.
 const GRIP_RADIUS = BEAKER_RADIUS * 1.15;
 const MAX_JOINT_CURL = 1.6;
+// Fingertip spheres. Small enough that a pad has to actually meet the glass.
+export const PAD_RADIUS = 0.008;
 // How hooked and how fanned the open hand is: together these make it a claw that can be
 // placed around a beaker. Both fade out as the hand closes.
 const CLAW_ANGLE = 0.18;
@@ -51,10 +53,18 @@ function collisionGroups(membership: number, filter: number) {
 type Digit = {
   bone: THREE.Bone;
   rest: THREE.Quaternion;
-  wrap: number; // curl at full squeeze, sized to GRIP_RADIUS
+  length: number;
   claw: number; // curl held by the open hand
   fan: number; // knuckle splay, open hand only
   thumb: boolean;
+};
+
+export type Pad = {
+  id: string;
+  bone: THREE.Bone;
+  collider: RAPIER.Collider;
+  curl: number;
+  blocked: boolean;
 };
 
 export type Arm = {
@@ -70,8 +80,10 @@ export type Arm = {
   restElbow: THREE.Quaternion;
   restHand: THREE.Quaternion;
   body: RAPIER.RigidBody;
-  // Contact points that close on a prop: the palm plus these make a tripod grasp.
-  tips: { bone: THREE.Bone; collider: RAPIER.Collider }[];
+  // Curl target radius. A nearby beaker replaces the default fist.
+  gripRadius: number;
+  // Pads that close on a prop. Curl stops when a pad meets the glass.
+  pads: Pad[];
   fingertip: THREE.Bone;
 };
 
@@ -165,12 +177,17 @@ function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1): Ar
       .setRestitution(0.02)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
       .setCollisionGroups(groups);
-  world.createCollider(solid(RAPIER.ColliderDesc.cuboid(0.035, 0.05, 0.02).setTranslation(0, 0.06, 0)), body);
-  // The thumb needs a collider of its own, or nothing opposes the fingers and a
-  // cylinder just squirts out of the hand.
-  const tips = [`Middle_1${tag}`, `Index_1${tag}`, `Thumb_1${tag}`].map((name) => ({
-    bone: findBone(model, name),
-    collider: world.createCollider(solid(RAPIER.ColliderDesc.cuboid(0.016, 0.016, 0.022)), body),
+  // A thin pad on the palm. The old box was a mitten: 7cm by 10cm by 4cm.
+  world.createCollider(
+    solid(RAPIER.ColliderDesc.cuboid(0.018, 0.028, 0.007).setTranslation(0, 0.045, 0)),
+    body,
+  );
+  const pads = ["Thumb", "Index", "Middle", "Ring", "Little"].map((name) => ({
+    id: name.toLowerCase(),
+    bone: findBone(model, `${name}_1${tag}`),
+    collider: world.createCollider(solid(RAPIER.ColliderDesc.ball(PAD_RADIUS)), body),
+    curl: 0,
+    blocked: false,
   }));
 
   return {
@@ -186,8 +203,9 @@ function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1): Ar
     restElbow: elbow.quaternion.clone(),
     restHand: hand.quaternion.clone(),
     body,
-    tips,
-    fingertip: tips[0].bone,
+    gripRadius: GRIP_RADIUS,
+    pads,
+    fingertip: pads[2].bone,
   };
 }
 
@@ -198,7 +216,7 @@ function describeDigit(bone: THREE.Bone): Digit {
   return {
     bone,
     rest: bone.quaternion.clone(),
-    wrap: Math.min(MAX_JOINT_CURL, segmentLength(bone) / GRIP_RADIUS),
+    length: segmentLength(bone),
     claw: CLAW_ANGLE,
     fan: knuckle && !thumb ? (FINGER_FAN[digit] ?? 0) * FINGER_FAN_ANGLE : 0,
     thumb,
@@ -242,13 +260,19 @@ const spin = new THREE.Quaternion();
 const thumbSpin = new THREE.Quaternion();
 const upperPose = new THREE.Quaternion();
 const xAxis = new THREE.Vector3(1, 0, 0);
-const yAxis = new THREE.Vector3(0, 1, 0);
 const zAxis = new THREE.Vector3(0, 0, 1);
 const handPosition = new THREE.Vector3();
 const handQuaternion = new THREE.Quaternion();
 const handInverse = new THREE.Quaternion();
 const tipPosition = new THREE.Vector3();
 const tipQuaternion = new THREE.Quaternion();
+const parentQuat = new THREE.Quaternion();
+const handQuat = new THREE.Quaternion();
+const playerQuat = new THREE.Quaternion();
+const pourQ = new THREE.Quaternion();
+const invPlayer = new THREE.Quaternion();
+const desired = new THREE.Quaternion();
+const tiltEuler = new THREE.Euler(0, 0, 0, "XZY");
 
 export function updateHands(hands: Hands, dt: number) {
   if (input.toggle) {
@@ -268,7 +292,9 @@ export function updateHands(hands: Hands, dt: number) {
   input.pourX = 0;
   input.pourY = 0;
 
-  poseArm(hands.arm, hands.pourRoll, dt, input.squeeze || input.gripLocked);
+  poseArm(hands.arm, dt, input.squeeze || input.gripLocked);
+  hands.model.updateMatrixWorld(true);
+  applyWristPour(hands);
   hands.model.updateMatrixWorld(true);
   syncArm(hands.arm);
 }
@@ -277,11 +303,17 @@ function clampPour(angle: number) {
   return Math.max(-POUR_LIMIT, Math.min(POUR_LIMIT, angle));
 }
 
-function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
+function poseArm(arm: Arm, dt: number, squeezing: boolean) {
   const raised = arm.raised ? 1 : 0;
   arm.blend += (raised - arm.blend) * (1 - Math.exp(-HAND_LERP * dt));
   const squeezeTarget = squeezing ? 1 : 0;
-  arm.squeeze += (squeezeTarget - arm.squeeze) * (1 - Math.exp(-SQUEEZE_LERP * dt));
+  const close = 1 - Math.exp(-SQUEEZE_LERP * dt);
+  arm.squeeze += (squeezeTarget - arm.squeeze) * close;
+  for (const pad of arm.pads) {
+    // A pad that has met the glass stops. Opening still plays.
+    if (pad.blocked && squeezeTarget > pad.curl) continue;
+    pad.curl += (squeezeTarget - pad.curl) * close;
+  }
 
   const drop = (1 - arm.blend) * DROP_ANGLE;
   upperPose.copy(arm.restUpper);
@@ -293,8 +325,7 @@ function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
   spin.setFromAxisAngle(xAxis, drop * 0.65);
   arm.elbow.quaternion.copy(arm.restElbow).multiply(spin);
 
-  spin.setFromAxisAngle(yAxis, -arm.side * pourRoll * arm.blend);
-  arm.hand.quaternion.copy(arm.restHand).multiply(spin);
+  arm.hand.quaternion.copy(arm.restHand);
 
   // Every joint hinges about its local Z, whose sign mirrors between the two hands. The
   // thumb base and the knuckle fan are the exceptions: they run about local X, which
@@ -312,14 +343,39 @@ function poseArm(arm: Arm, pourRoll: number, dt: number, squeezing: boolean) {
       thumbSpin.setFromAxisAngle(xAxis, THUMB_TIP_STRAIGHT);
       bone.quaternion.multiply(thumbSpin);
     } else if (!digit.thumb) {
-      spin.setFromAxisAngle(zAxis, -arm.side * (digit.claw + arm.squeeze * (digit.wrap - digit.claw)));
+      const curl = padCurl(arm, bone.name);
+      const wrap = Math.min(MAX_JOINT_CURL, digit.length / arm.gripRadius);
+      spin.setFromAxisAngle(zAxis, -arm.side * (digit.claw + curl * (wrap - digit.claw)));
       bone.quaternion.multiply(spin);
       if (digit.fan !== 0) {
-        spin.setFromAxisAngle(xAxis, digit.fan * (1 - arm.squeeze));
+        spin.setFromAxisAngle(xAxis, digit.fan * (1 - curl));
         bone.quaternion.multiply(spin);
       }
     }
   }
+}
+
+function padCurl(arm: Arm, boneName: string) {
+  const id = boneName.slice(0, boneName.indexOf("_")).toLowerCase();
+  const pad = arm.pads.find((item) => item.id === id);
+  return pad ? pad.curl : arm.squeeze;
+}
+
+// Pour is a rotation in the player's frame, laid on top of the posed wrist, so pitch
+// tips the glass away and roll tips it sideways. The same delta turns a held beaker.
+function applyWristPour(hands: Hands) {
+  const hand = hands.arm.hand;
+  const parent = hand.parent;
+  const player = hands.model.parent;
+  if (!parent || !player) return;
+  parent.getWorldQuaternion(parentQuat);
+  hand.getWorldQuaternion(handQuat);
+  player.getWorldQuaternion(playerQuat);
+  tiltEuler.set(hands.pourPitch, 0, hands.pourRoll);
+  pourQ.setFromEuler(tiltEuler);
+  invPlayer.copy(playerQuat).invert();
+  desired.copy(playerQuat).multiply(pourQ).multiply(invPlayer).multiply(handQuat);
+  hand.quaternion.copy(parentQuat.invert()).multiply(desired);
 }
 
 function syncArm(arm: Arm) {
@@ -334,7 +390,7 @@ function syncArm(arm: Arm) {
   });
 
   handInverse.copy(handQuaternion).invert();
-  for (const tip of arm.tips) {
+  for (const tip of arm.pads) {
     tip.bone.getWorldPosition(tipPosition);
     tip.bone.getWorldQuaternion(tipQuaternion);
     // The body is unscaled, so the offset must stay in metres: worldToLocal on the bone

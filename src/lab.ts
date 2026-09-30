@@ -42,7 +42,8 @@ const GREEN = 0x2f8f4e;
 const BLUE = 0x2d6fdb;
 
 const BENCH_TOP = 0.9;
-const SURFACE = BENCH_TOP + 0.035;
+// Top of the bench box. Dressing sits instruments on this.
+export const BENCH_SURFACE = BENCH_TOP + 0.035;
 const BENCH_WIDTH = 1.55;
 const BENCH_DEPTH = 0.78;
 
@@ -122,24 +123,23 @@ const BENCHES: { x: number; z: number; facing: 1 | -1; items: Stock[] }[] = [
 ];
 
 export function createLab(scene: THREE.Scene, world: RAPIER.World): Beaker[] {
-  const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xdfe2e5, roughness: 0.6 });
-  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f5f6, roughness: 0.9 });
-  const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xf7f8f9, roughness: 0.95 });
-  const topMaterial = new THREE.MeshStandardMaterial({ color: 0xeef0f2, roughness: 0.35, metalness: 0.02 });
-  const cabinetMaterial = new THREE.MeshStandardMaterial({ color: 0xfafbfc, roughness: 0.7 });
-  const trimMaterial = new THREE.MeshStandardMaterial({ color: 0xb8bec4, roughness: 0.5, metalness: 0.3 });
+  const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.95 });
+  const topMaterial = new THREE.MeshStandardMaterial({ color: 0xe4dfd6, roughness: 0.45, metalness: 0.02 });
+  const cabinetMaterial = new THREE.MeshStandardMaterial({ color: 0x8d5a32, roughness: 0.72 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: 0x5e3b22, roughness: 0.8 });
   const panelMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     emissive: 0xffffff,
     emissiveIntensity: 1.2,
   });
 
-  addBox(scene, world, floorMaterial, 8, 0.5, 8, 0, -0.25, 0);
+  // Floor and walls are collision only. dressLab covers them with the classroom set.
+  addBox(scene, world, ceilingMaterial, 8, 0.5, 8, 0, -0.25, 0, false);
   addBox(scene, world, ceilingMaterial, 8, 0.2, 8, 0, 3.1, 0);
-  addBox(scene, world, wallMaterial, 8, 3, 0.2, 0, 1.5, -4);
-  addBox(scene, world, wallMaterial, 8, 3, 0.2, 0, 1.5, 4);
-  addBox(scene, world, wallMaterial, 0.2, 3, 8, -4, 1.5, 0);
-  addBox(scene, world, wallMaterial, 0.2, 3, 8, 4, 1.5, 0);
+  addBox(scene, world, ceilingMaterial, 8, 3, 0.2, 0, 1.5, -4, false);
+  addBox(scene, world, ceilingMaterial, 8, 3, 0.2, 0, 1.5, 4, false);
+  addBox(scene, world, ceilingMaterial, 0.2, 3, 8, -4, 1.5, 0, false);
+  addBox(scene, world, ceilingMaterial, 0.2, 3, 8, 4, 1.5, 0, false);
   for (const x of [-1.8, 0, 1.8]) {
     for (const z of [-0.2, 2.2]) {
       const panel = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.02, 0.3), panelMaterial);
@@ -195,12 +195,15 @@ function addBox(
   x: number,
   y: number,
   z: number,
+  visible = true,
 ) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
+  if (visible) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
   world.createCollider(
@@ -254,7 +257,7 @@ function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: num
   mesh.castShadow = true;
   scene.add(mesh);
 
-  const centerY = SURFACE + height / 2;
+  const centerY = BENCH_SURFACE + height / 2;
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, centerY, z)

@@ -6,7 +6,9 @@ import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createHands, updateHands } from "./hands";
 import { createHold, updateHold } from "./hold";
+import { createHandShadow, updateHandShadow } from "./handShadow";
 import { createLab, syncBeakers } from "./lab";
+import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
 import { createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
@@ -28,16 +30,16 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.localClippingEnabled = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xe9edf0);
-scene.fog = new THREE.Fog(0xe9edf0, 9, 18);
+scene.background = new THREE.Color(0xb7d4ea);
+scene.fog = new THREE.Fog(0xe7eef2, 10, 20);
 
 const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 40);
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
-world.integrationParameters.numSolverIterations = 10;
+world.integrationParameters.numSolverIterations = 16;
 
-scene.add(new THREE.HemisphereLight(0xf4f7fa, 0xb9bec4, 1.25));
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+scene.add(new THREE.HemisphereLight(0xfff8f0, 0xd9c4a4, 1.45));
+const sun = new THREE.DirectionalLight(0xfff6ea, 1.35);
 sun.position.set(1.5, 7, 1.5);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -54,10 +56,11 @@ const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
 
 const player = createPlayer(scene, world, camera);
-const hands = await createHands(world);
-const reach = createReach(hands, player);
 const beakers = createLab(scene, world);
+const [hands] = await Promise.all([createHands(world), dressLab(scene, world)]);
+const reach = createReach(hands, player);
 const hold = createHold();
+const handShadow = createHandShadow(scene);
 const fluid = createFluid(scene, beakers, envMap, sun.position);
 const body = createBody(1);
 const blood = createBlood();
@@ -89,9 +92,10 @@ function frame(now: number) {
   updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
   updateHands(hands, dt);
-  updateHold(hold, hands, beakers, dt);
+  updateHold(hold, hands, beakers, world, dt);
   world.step();
   syncBeakers(beakers);
+  updateHandShadow(handShadow, world, hands, hold.grips[0]?.beaker.body);
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
   const drinker = player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);
