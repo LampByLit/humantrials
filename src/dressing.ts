@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { BENCH_SURFACE } from "./lab";
+import { BENCH_SURFACE, ROOM_X, ROOM_Z } from "./lab";
 
 // School Classrooms Asset Pack by styloo, CC0.
 // https://styloo.itch.io/classroom-asset-pack
@@ -9,8 +9,10 @@ import { BENCH_SURFACE } from "./lab";
 const WORLD_GROUP = 0x0002;
 const ALL_GROUPS = 0xffff;
 
-// Shell colliders in lab.ts sit on x/z = ±4. Modules are centered on the inner face.
-const WALL = 3.9;
+// Shell colliders in lab.ts sit on the room half extents. Modules are centered on the inner face.
+const WALL_X = ROOM_X - 0.1;
+const WALL_Z = ROOM_Z - 0.1;
+const MODULE = 2;
 // The wall modules are 2m tall. A plain band finishes them up to the ceiling.
 const MODULE_Y = 1;
 const UPPER_BOTTOM = 2;
@@ -35,20 +37,6 @@ function prepare(root: THREE.Object3D) {
       map.minFilter = THREE.NearestFilter;
       map.generateMipmaps = false;
       map.needsUpdate = true;
-    }
-  });
-}
-
-function paint(root: THREE.Object3D, color: number) {
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      const standard = material as THREE.MeshStandardMaterial;
-      standard.map = null;
-      standard.color.set(color);
-      standard.roughness = 0.86;
     }
   });
 }
@@ -110,15 +98,13 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     return gltf.scene;
   };
 
-  const [floor, wall, windowWall, door, doorPanel, board, boardSmall, shelf, extinguisher, chair, microscope, centrifuge, vials] =
+  const [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials] =
     await Promise.all([
       load("floor"),
       load("wall"),
       load("window"),
       load("door"),
       load("door-panel"),
-      load("board"),
-      load("board-small"),
       load("shelf"),
       load("extinguisher"),
       load("chair"),
@@ -127,29 +113,32 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
       load("vials"),
     ]);
 
-  // The boards ship as a flat brown palette swatch. A green board reads as a chalkboard.
-  paint(board, 0x24362c);
-  paint(boardSmall, 0x24362c);
-
-  const slots = [-3, -1, 1, 3];
-  for (const x of slots) {
-    for (const z of slots) {
+  const slots = (half: number) => {
+    const out: number[] = [];
+    for (let s = -half + MODULE / 2; s < half; s += MODULE) out.push(s);
+    return out;
+  };
+  const xSlots = slots(ROOM_X);
+  const zSlots = slots(ROOM_Z);
+  const lastX = xSlots[xSlots.length - 1];
+  const doorX = xSlots[xSlots.length - 2];
+  for (const [i, x] of xSlots.entries()) {
+    for (const [j, z] of zSlots.entries()) {
       const tile = floor.clone(true);
       tile.position.set(x, 0, z);
-      tile.rotation.y = (x + z) % 4 === 0 ? Math.PI / 2 : 0;
+      tile.rotation.y = (i + j) % 2 === 0 ? Math.PI / 2 : 0;
       scene.add(tile);
     }
   }
 
   // North, the wall the player faces: windows over the benches, plain panels behind the shelves.
-  for (const x of slots) addModule(scene, x === -1 || x === 1 ? windowWall : wall, x, -WALL, 0);
-  // South: a door just off the middle.
-  for (const x of slots) addModule(scene, x === 1 ? door : wall, x, WALL, Math.PI);
-  // East and west: windows at the ends.
-  for (const z of slots) {
-    const side = z === -3 || z === 3 ? windowWall : wall;
-    addModule(scene, side, WALL, z, -Math.PI / 2);
-    addModule(scene, side, -WALL, z, Math.PI / 2);
+  for (const x of xSlots) addModule(scene, Math.abs(x) === lastX ? wall : windowWall, x, -WALL_Z, 0);
+  // South: a door near the east corner.
+  for (const x of xSlots) addModule(scene, x === doorX ? door : wall, x, WALL_Z, Math.PI);
+  // East and west: windows all along.
+  for (const z of zSlots) {
+    addModule(scene, windowWall, WALL_X, z, -Math.PI / 2);
+    addModule(scene, windowWall, -WALL_X, z, Math.PI / 2);
   }
 
   const plaster = new THREE.MeshStandardMaterial({ color: 0xe6e4df, roughness: 0.92 });
@@ -161,43 +150,40 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     scene.add(mesh);
   };
   const upperCenter = UPPER_BOTTOM + 0.5;
-  band(8.05, 1.02, 0.08, 0, upperCenter, -WALL);
-  band(8.05, 1.02, 0.08, 0, upperCenter, WALL);
-  band(0.08, 1.02, 8.05, -WALL, upperCenter, 0);
-  band(0.08, 1.02, 8.05, WALL, upperCenter, 0);
+  const spanX = ROOM_X * 2 + 0.05;
+  const spanZ = ROOM_Z * 2 + 0.05;
+  band(spanX, 1.02, 0.08, 0, upperCenter, -WALL_Z);
+  band(spanX, 1.02, 0.08, 0, upperCenter, WALL_Z);
+  band(0.08, 1.02, spanZ, -WALL_X, upperCenter, 0);
+  band(0.08, 1.02, spanZ, WALL_X, upperCenter, 0);
 
   // Short bookcases in the north corners, under the plain wall panels so they don't cover the windows.
-  for (const x of [-3.15, 3.15]) {
-    const bookcase = place(shelf, x, -3, Math.PI, 0, 0.5);
-    flush(bookcase, "z", "min", -WALL + 0.04);
+  for (const x of [-lastX - 0.15, lastX + 0.15]) {
+    const bookcase = place(shelf, x, -ROOM_Z + 1, Math.PI, 0, 0.5);
+    flush(bookcase, "z", "min", -WALL_Z + 0.04);
     scene.add(bookcase);
     solid(world, bookcase);
   }
 
-  const doorLeaf = place(doorPanel, 1, WALL, 0, 0);
-  flush(doorLeaf, "z", "max", WALL - 0.02);
+  const doorLeaf = place(doorPanel, doorX, WALL_Z, 0, 0);
+  flush(doorLeaf, "z", "max", WALL_Z - 0.02);
   scene.add(doorLeaf);
 
-  // Big board on the west wall, little one on the east, both above the wainscot.
-  const westBoard = place(board, -3.4, 0.2, Math.PI / 2, 1.15);
-  flush(westBoard, "x", "min", -WALL + 0.04);
-  scene.add(westBoard);
-
-  const eastBoard = place(boardSmall, 3.4, 1.4, -Math.PI / 2, 1.2);
-  flush(eastBoard, "x", "max", WALL - 0.04);
-  scene.add(eastBoard);
-
-  const hose = place(extinguisher, 3.4, 3.4, 0, 0);
-  flush(hose, "x", "max", WALL - 0.06);
-  flush(hose, "z", "max", WALL - 0.06);
+  const hose = place(extinguisher, WALL_X - 0.5, WALL_Z - 0.5, 0, 0);
+  flush(hose, "x", "max", WALL_X - 0.06);
+  flush(hose, "z", "max", WALL_Z - 0.06);
   scene.add(hose);
   solid(world, hose);
 
-  // Rolling chairs in the open north end of the room, facing the benches.
+  // Rolling chairs in the open strips down the east and west sides, facing the benches.
+  const side = ROOM_X - 1.2;
   const chairs: [number, number, number][] = [
-    [-3.15, -1.55, Math.PI / 2],
-    [3.15, -1.55, -Math.PI / 2],
-    [0, -2.15, Math.PI],
+    [-side, -1.2, Math.PI / 2],
+    [side, -1.2, -Math.PI / 2],
+    [-side, 2.8, Math.PI / 2],
+    [side, 2.8, -Math.PI / 2],
+    [-side, -3.4, Math.PI / 2],
+    [side, -3.4, -Math.PI / 2],
   ];
   for (const [x, z, rotY] of chairs) {
     const stool = place(chair, x, z, rotY, 0);
@@ -205,11 +191,16 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     solid(world, stool);
   }
 
-  // Instruments sit on the back edge of the north benches, behind the glassware.
-  const onBench = (source: THREE.Object3D, x: number) => {
-    scene.add(place(source, x, -0.42, 0, BENCH_SURFACE));
+  // Instruments sit on the back edge of the south-facing benches, behind the glassware.
+  const onBench = (source: THREE.Object3D, x: number, z: number) => {
+    scene.add(place(source, x, z - 0.22, 0, BENCH_SURFACE));
   };
-  onBench(microscope, 0);
-  onBench(vials, -1.8);
-  onBench(centrifuge, 1.8);
+  onBench(microscope, 0, -0.2);
+  onBench(vials, -1.8, -0.2);
+  onBench(centrifuge, 1.8, -0.2);
+  onBench(vials, -3.6, -0.2);
+  onBench(microscope, 3.6, -0.2);
+  onBench(centrifuge, -3.6, -4.4);
+  onBench(microscope, -1.8, -4.4);
+  onBench(vials, 0, -4.4);
 }

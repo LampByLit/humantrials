@@ -1,102 +1,119 @@
 import * as THREE from "three";
-import RAPIER from "@dimforge/rapier3d-compat";
 import type { Hands } from "./hands";
 
-const RAY_GROUPS = ((0x0002 | 0x0008) << 16) | 0xffff;
+const HAND_LAYER = 1;
+// From the palm. The shoulder sits about 0.34 away, and a mesh clipped by the shadow
+// camera's near plane fills the map with a solid square, so anything past this is
+// pulled onto the sphere before it is projected.
+const CAST_RADIUS = 0.24;
+const HALF = CAST_RADIUS + 0.02;
+const MAP_SIZE = 1024;
+const TEXEL = (2 * HALF) / MAP_SIZE;
+// The cast sphere has to sit entirely in front of the near plane.
+const HOVER = 0.6;
+const NEAR = HOVER - CAST_RADIUS - 0.05;
+const FLOOR = -0.4;
 const PALM = new THREE.Vector3(0, 0.06, 0);
-const MAX_DROP = 1.4;
-const FADE_DROP = 1.1;
-const NEAR_RADIUS = 0.035;
-const SPREAD = 0.1;
-const DARKNESS = 0.6;
-const LIFT = 0.002;
 
 export type HandShadow = {
-  mesh: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
-  ray: RAPIER.Ray;
+  light: THREE.DirectionalLight;
 };
 
-// A soft disc dropped straight down from the palm. It sits directly under the hand, so
-// it reads where the hand is over the bench, and it tightens and darkens as the hand
-// comes down, which reads height.
-export function createHandShadow(scene: THREE.Scene): HandShadow {
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(1, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      alphaMap: blobTexture(),
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-      fog: false,
-    }),
-  );
-  mesh.visible = false;
-  mesh.frustumCulled = false;
-  // Draws after the glass so it still shows through a beaker wall.
-  mesh.renderOrder = 4;
-  scene.add(mesh);
-  return { mesh, ray: new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }) };
-}
+// A light straight above the hand. The hand is the only thing drawn into its shadow
+// map, so the silhouette falls directly underneath, on the bench, a beaker, or the
+// floor, whatever height and angle the hand is held at.
+export function createHandShadow(scene: THREE.Scene, camera: THREE.Camera, hands: Hands): HandShadow {
+  camera.layers.enable(HAND_LAYER);
 
-function blobTexture() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext("2d")!;
-  const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, "#fff");
-  gradient.addColorStop(0.45, "#aaa");
-  gradient.addColorStop(1, "#000");
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(canvas);
+  const localPalm = new THREE.Vector3();
+  const localRadius = { value: 1 };
+  const skip = { value: 0 };
+  const depth = new THREE.MeshDepthMaterial({ side: THREE.BackSide });
+  depth.onBeforeCompile = (shader) => {
+    shader.uniforms.localPalm = { value: localPalm };
+    shader.uniforms.localRadius = localRadius;
+    shader.uniforms.skip = skip;
+    shader.vertexShader =
+      "uniform vec3 localPalm;\nuniform float localRadius;\nuniform float skip;\n" +
+      shader.vertexShader.replace(
+        "#include <project_vertex>",
+        /* glsl */ `
+          vec3 delta = transformed - localPalm;
+          float dist = length(delta);
+          if (dist > localRadius) transformed = localPalm + delta * (localRadius / dist);
+          #include <project_vertex>
+          if (skip > 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        `,
+      );
+  };
+
+  const inverse = new THREE.Matrix4();
+  const scale = new THREE.Vector3();
+  hands.model.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.layers.set(HAND_LAYER);
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    mesh.customDepthMaterial = depth;
+    mesh.onBeforeShadow = (_renderer, skinned, _camera, shadowCamera) => {
+      // This mesh is drawn into every shadow map the view camera can see. The sun's
+      // map is the angled one; skip it so the hand has a single shadow, straight down.
+      skip.value = shadowCamera.layers.isEnabled(HAND_LAYER) ? 0 : 1;
+      skinned.updateWorldMatrix(true, false);
+      inverse.copy(skinned.matrixWorld).invert();
+      localPalm.copy(palm).applyMatrix4(inverse);
+      skinned.getWorldScale(scale);
+      localRadius.value = CAST_RADIUS / scale.x;
+    };
+  });
+
+  const light = new THREE.DirectionalLight(0xfff6ea, 1.15);
+  light.castShadow = true;
+  light.shadow.mapSize.set(MAP_SIZE, MAP_SIZE);
+  light.shadow.bias = -0.00015;
+  light.shadow.normalBias = 0.003;
+  const shadowCamera = light.shadow.camera;
+  shadowCamera.left = -HALF;
+  shadowCamera.right = HALF;
+  shadowCamera.top = HALF;
+  shadowCamera.bottom = -HALF;
+  shadowCamera.near = NEAR;
+  // Straight down is parallel to the default up axis, which breaks the shadow camera.
+  shadowCamera.up.set(0, 0, -1);
+  shadowCamera.layers.set(HAND_LAYER);
+  shadowCamera.updateProjectionMatrix();
+  scene.add(light, light.target);
+  return { light };
 }
 
 const palm = new THREE.Vector3();
+const sample = new THREE.Vector3();
 const offset = new THREE.Vector3();
 const handQuat = new THREE.Quaternion();
-const normal = new THREE.Vector3();
-const facing = new THREE.Vector3(0, 0, 1);
 
-export function updateHandShadow(
-  shadow: HandShadow,
-  world: RAPIER.World,
-  hands: Hands,
-  held: RAPIER.RigidBody | undefined,
-) {
+export function updateHandShadow(shadow: HandShadow, hands: Hands) {
   const hand = hands.arm.hand;
   hand.getWorldPosition(palm);
   hand.getWorldQuaternion(handQuat);
   palm.add(offset.copy(PALM).applyQuaternion(handQuat));
-
-  const ray = shadow.ray;
-  ray.origin.x = palm.x;
-  ray.origin.y = palm.y;
-  ray.origin.z = palm.z;
-  const hit = world.castRayAndGetNormal(
-    ray,
-    MAX_DROP,
-    true,
-    0 as RAPIER.QueryFilterFlags,
-    RAY_GROUPS,
-    undefined,
-    held,
-  );
-  const mesh = shadow.mesh;
-  if (!hit) {
-    mesh.visible = false;
-    return;
+  if (hands.pair > 0.02) {
+    hands.left.hand.getWorldPosition(sample);
+    hands.left.hand.getWorldQuaternion(handQuat);
+    sample.add(offset.copy(PALM).applyQuaternion(handQuat));
+    palm.lerp(sample, hands.pair * 0.5);
   }
 
-  const drop = hit.timeOfImpact;
-  normal.set(hit.normal.x, hit.normal.y, hit.normal.z);
-  mesh.position.set(palm.x, palm.y - drop, palm.z).addScaledVector(normal, LIFT);
-  mesh.quaternion.setFromUnitVectors(facing, normal);
-  mesh.scale.setScalar(NEAR_RADIUS + SPREAD * drop);
-  mesh.material.opacity = DARKNESS * Math.max(0, 1 - drop / FADE_DROP);
-  mesh.visible = mesh.material.opacity > 0.01;
+  const x = Math.round(palm.x / TEXEL) * TEXEL;
+  const z = Math.round(palm.z / TEXEL) * TEXEL;
+  const y = palm.y + HOVER;
+  shadow.light.position.set(x, y, z);
+  shadow.light.target.position.set(x, palm.y, z);
+
+  const shadowCamera = shadow.light.shadow.camera;
+  const far = y - FLOOR;
+  if (shadowCamera.far !== far) {
+    shadowCamera.far = far;
+    shadowCamera.updateProjectionMatrix();
+  }
 }

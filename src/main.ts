@@ -4,7 +4,7 @@ import { bindInput, input } from "./input";
 import { createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } from "./player";
 import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { createHands, updateHands } from "./hands";
+import { createHands, settleHand, updateHands } from "./hands";
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
 import { createLab, syncBeakers } from "./lab";
@@ -31,24 +31,26 @@ renderer.localClippingEnabled = true;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb7d4ea);
-scene.fog = new THREE.Fog(0xe7eef2, 10, 20);
+scene.fog = new THREE.Fog(0xe7eef2, 16, 32);
 
 const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 40);
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.integrationParameters.numSolverIterations = 16;
 
-scene.add(new THREE.HemisphereLight(0xfff8f0, 0xd9c4a4, 1.45));
-const sun = new THREE.DirectionalLight(0xfff6ea, 1.35);
+// The hand light in handShadow.ts supplies the rest of the light on upward surfaces,
+// and is the only light the hand blocks, so its shadow stays readable.
+scene.add(new THREE.HemisphereLight(0xfff8f0, 0xd9c4a4, 1));
+const sun = new THREE.DirectionalLight(0xfff6ea, 0.85);
 sun.position.set(1.5, 7, 1.5);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 0.5;
-sun.shadow.camera.far = 18;
-sun.shadow.camera.left = -6;
-sun.shadow.camera.right = 6;
-sun.shadow.camera.top = 6;
-sun.shadow.camera.bottom = -6;
+sun.shadow.camera.far = 20;
+sun.shadow.camera.left = -10;
+sun.shadow.camera.right = 10;
+sun.shadow.camera.top = 10;
+sun.shadow.camera.bottom = -10;
 scene.add(sun);
 
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -60,7 +62,7 @@ const beakers = createLab(scene, world);
 const [hands] = await Promise.all([createHands(world), dressLab(scene, world)]);
 const reach = createReach(hands, player);
 const hold = createHold();
-const handShadow = createHandShadow(scene);
+const handShadow = createHandShadow(scene, camera, hands);
 const fluid = createFluid(scene, beakers, envMap, sun.position);
 const body = createBody(1);
 const blood = createBlood();
@@ -92,10 +94,11 @@ function frame(now: number) {
   updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
   updateHands(hands, dt);
+  settleHand(hands, world);
   updateHold(hold, hands, beakers, world, dt);
   world.step();
   syncBeakers(beakers);
-  updateHandShadow(handShadow, world, hands, hold.grips[0]?.beaker.body);
+  updateHandShadow(handShadow, hands);
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
   const drinker = player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);

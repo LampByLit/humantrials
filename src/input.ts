@@ -7,6 +7,7 @@ export const input = {
   reach: 0,
   space: false,
   toggle: false,
+  pairToggle: false,
   gripLocked: false,
   squeeze: false,
   locked: false,
@@ -23,6 +24,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       input.space = false;
       input.squeeze = false;
       input.gripLocked = false;
+      input.pairToggle = false;
     }
   };
 
@@ -46,6 +48,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   document.addEventListener("keydown", (event) => {
     if (event.code === "Space") event.preventDefault();
     if (!input.playing) return;
+    if (event.code === "KeyF" && !event.repeat) input.pairToggle = true;
     input.keys.add(event.code);
     if (event.code === "Space") input.space = true;
   });

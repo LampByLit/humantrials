@@ -86,7 +86,12 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
 
   settleQuiet(hold, arm, dt);
   const held = hold.grips.find((grip) => grip.arm === arm);
+  // The right hand keeps its own curl. F does not retarget it. The left hand, once
+  // it is in, stays open for something larger than a beaker and stops on the
+  // right fingertips instead of wrapping a glass.
   aimFingers(arm, beakers, held?.beaker ?? gripping?.beaker);
+  if (hands.pair < 0.45) aimFingers(hands.left, beakers, undefined);
+  else hands.left.gripRadius = 0.3;
 }
 
 function grab(hold: Hold, hands: Hands, arm: Arm, beaker: Beaker, world: RAPIER.World) {
