@@ -4,14 +4,14 @@ import { bindInput, input } from "./input";
 import { createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } from "./player";
 import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { createHands, settleHand, updateHands } from "./hands";
+import { createHands, driveLeftHand, followLeftHand, settleHand, updateHands } from "./hands";
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
 import { createLab, syncBeakers } from "./lab";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
-import { createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
+import { conditionOf, createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
 
 await RAPIER.init();
 
@@ -93,10 +93,12 @@ function frame(now: number) {
   updatePlayer(player, world, dt, grounded, verticalVelocity);
   updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
-  updateHands(hands, dt);
+  updateHands(hands, beakers, dt);
   settleHand(hands, world);
+  driveLeftHand(hands, beakers, dt);
   updateHold(hold, hands, beakers, world, dt);
   world.step();
+  followLeftHand(hands, world);
   syncBeakers(beakers);
   updateHandShadow(handShadow, hands);
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
@@ -125,17 +127,61 @@ function frame(now: number) {
 requestAnimationFrame(frame);
 
 function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Symptom[]) {
+  const condition = conditionOf(body, symptoms);
+  root.className = condition;
+  const headline = body.cause
+    ? body.cause
+    : symptoms.length > 0
+      ? symptoms.map((symptom) => symptom.text).join(" · ")
+      : "Nothing in the blood is moving you.";
+  const failing =
+    body.alive && body.critical > 0
+      ? `<div class="failing">Heart or breathing failing for ${body.critical.toFixed(1)}s</div>`
+      : "";
   const organs = body.organs
     .map((organ) => {
       const symptom = symptoms.find((item) => item.organ === organ.name);
-      const text = symptom ? symptom.text : "steady";
+      const text = symptom ? `${symptom.band} · ${symptom.text}` : "steady";
       const mark = ((organ.deflection + 1) * 50).toFixed(1);
+      const signed = `${organ.deflection >= 0 ? "+" : ""}${organ.deflection.toFixed(2)}`;
       const integrity = Math.round(organ.integrity * 100);
-      return `<div class="organ"><div class="name">${organ.name}</div><div class="track"><div class="mark" style="left:${mark}%"></div></div><div>${text}</div><div class="meta">integrity ${integrity}%</div></div>`;
+      return `<div class="organ"><div class="name">${organ.name}<span>${signed}</span></div><div class="track"><div class="mark" style="left:${mark}%"></div></div><div>${text}</div><div class="integrity"><div style="width:${integrity}%"></div></div><div class="meta">integrity ${integrity}%</div></div>`;
     })
     .join("");
-  const pending = blood.pending.length > 0 ? `<div class="pending">A dose is coming on</div>` : "";
-  root.innerHTML = organs + pending;
+  const circulating = tally(blood.doses);
+  const bloodLines =
+    circulating.length === 0
+      ? `<div class="meta">Blood is clear</div>`
+      : circulating
+          .map((dose) => `<div class="dose"><i style="background:${dose.hex}"></i><span>${dose.hex}</span><b>${formatMass(dose.mass)}</b></div>`)
+          .join("");
+  const pending =
+    blood.pending.length === 0
+      ? ""
+      : `<div class="section">Coming on</div>` +
+        blood.pending
+          .map(
+            (dose) =>
+              `<div class="dose"><i style="background:${dose.hex}"></i><span>${dose.hex}</span><b>${formatMass(dose.mass)} · ${Math.max(0, dose.left).toFixed(1)}s</b></div>`,
+          )
+          .join("");
+  root.innerHTML = `<div class="condition">${condition}</div><div class="headline">${headline}</div>${failing}${organs}<div class="section">In the blood</div>${bloodLines}${pending}`;
+}
+
+function tally(doses: { hex: string; mass: number }[]) {
+  const order: string[] = [];
+  const mass = new Map<string, number>();
+  for (const dose of doses) {
+    if (!mass.has(dose.hex)) order.push(dose.hex);
+    mass.set(dose.hex, (mass.get(dose.hex) ?? 0) + dose.mass);
+  }
+  return order.map((hex) => ({ hex, mass: mass.get(hex)! }));
+}
+
+function formatMass(mass: number) {
+  if (mass >= 10) return mass.toFixed(1);
+  if (mass >= 1) return mass.toFixed(2);
+  return mass.toFixed(3);
 }
 
 function formatVolume(cubicMetres: number) {

@@ -17,7 +17,23 @@ export type Beaker = {
   radius: number;
   height: number;
   solution: Solution;
+  handles: Handle[];
 };
+
+// A grippable cylinder fixed to a vessel's body, in the body's local frame.
+export type Handle = {
+  collider: RAPIER.Collider;
+  center: THREE.Vector3;
+  axis: THREE.Vector3;
+  radius: number;
+  half: number;
+};
+
+// Trays carry an upside-down L: a post up from the rim nearest the player, and a
+// bar off its top pointing at the player, thick enough to pinch.
+const HANDLE_RADIUS = 0.009;
+const HANDLE_RISE = 0.08;
+const HANDLE_REACH = 0.07;
 
 // A 250mL beaker. The hand rig spans about 9.5cm between the thumb pad and the
 // fingertips at full stretch, so anything much wider than this cannot be picked up:
@@ -334,7 +350,7 @@ function lineUp(scene: THREE.Scene, world: RAPIER.World, bench: Bench, items: St
     cursor += bench.facing * r;
     // Anything wider than a beaker is pulled back so its front rim stays on the bench edge line.
     const z = edge - bench.facing * Math.max(0, r - 0.04);
-    out.push(addVessel(scene, world, item, cursor, z));
+    out.push(addVessel(scene, world, item, cursor, z, bench.facing));
     cursor += bench.facing * (r + gap);
   }
 }
@@ -406,7 +422,7 @@ const plastic = new THREE.MeshStandardMaterial({
   depthWrite: true,
 });
 
-function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: number, z: number): Beaker {
+function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: number, z: number, facing: 1 | -1): Beaker {
   const { radius, height, density, tray } = stock.size;
   const material = tray ? plastic : glass;
   const mesh = new THREE.Group();
@@ -457,7 +473,55 @@ function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: num
     radius,
     height,
     solution: stock.hex === undefined ? water(volume) : solutionFromHex(stock.hex, volume, STOCK),
+    handles: tray ? addTrayHandle(world, body, mesh, material, radius, height, density, facing) : [],
   };
+}
+
+function addTrayHandle(
+  world: RAPIER.World,
+  body: RAPIER.RigidBody,
+  mesh: THREE.Group,
+  material: THREE.Material,
+  radius: number,
+  height: number,
+  density: number,
+  facing: 1 | -1,
+): Handle[] {
+  const postZ = facing * (radius + HANDLE_RADIUS * 0.5);
+  const postHalf = (height + HANDLE_RISE) / 2;
+  const top = -height / 2 + postHalf * 2;
+  const barHalf = HANDLE_REACH / 2 + HANDLE_RADIUS;
+  const post = {
+    center: new THREE.Vector3(0, -height / 2 + postHalf, postZ),
+    axis: new THREE.Vector3(0, 1, 0),
+    half: postHalf,
+  };
+  const bar = {
+    center: new THREE.Vector3(0, top, postZ + facing * (HANDLE_REACH / 2)),
+    axis: new THREE.Vector3(0, 0, 1),
+    half: barHalf,
+  };
+  const lay = new THREE.Quaternion().setFromUnitVectors(post.axis, bar.axis);
+  return [post, bar].map((part) => {
+    const turn = part === bar ? lay : new THREE.Quaternion();
+    const piece = new THREE.Mesh(new THREE.CylinderGeometry(HANDLE_RADIUS, HANDLE_RADIUS, part.half * 2, 16), material);
+    piece.position.copy(part.center);
+    piece.quaternion.copy(turn);
+    piece.renderOrder = 3;
+    mesh.add(piece);
+    const collider = world.createCollider(
+      RAPIER.ColliderDesc.cylinder(part.half, HANDLE_RADIUS)
+        .setTranslation(part.center.x, part.center.y, part.center.z)
+        .setRotation({ x: turn.x, y: turn.y, z: turn.z, w: turn.w })
+        .setDensity(density)
+        .setFriction(1.4)
+        .setRestitution(0.04)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
+        .setCollisionGroups(collisionGroups(PROP_GROUP, ALL_GROUPS)),
+      body,
+    );
+    return { ...part, collider, radius: HANDLE_RADIUS };
+  });
 }
 
 export function syncBeakers(beakers: Beaker[]) {

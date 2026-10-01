@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { input } from "./input";
-import { BEAKER_RADIUS } from "./lab";
+import { BEAKER_RADIUS, type Beaker } from "./lab";
 
 const MODEL_URL = "/models/fps-arm-rig.glb";
 const MODEL_SCALE = 0.0046;
@@ -41,12 +41,10 @@ const THUMB_AIM = 1.25;
 const THUMB_KNUCKLE_STRAIGHT = -0.4;
 const THUMB_TIP_STRAIGHT = -0.35;
 const SPLAY_ANGLE = 0.34;
-// How far the left shoulder can swing across. A second aim then lowers it onto
-// the right fingertips and stops when they meet. The right arm is not part of this.
-const LEFT_PINCH = 1.15;
-// Bone-centre gap at which the fingertip skins meet. Closer than this and the
-// fingers pass through each other.
-const TIP_GAP = 0.028;
+// Palms meet this far apart when F brings the left hand in from the side.
+const PALM_GAP = BEAKER_RADIUS * 2;
+// Mass of the soft left hand. Heavy enough that a full pot doesn't flick it away.
+const LEFT_MASS = 1.1;
 
 const HAND_GROUP = 0x0004;
 const WORLD_GROUP = 0x0002;
@@ -93,6 +91,9 @@ export type Arm = {
   pads: Pad[];
   fingertip: THREE.Bone;
   solid: boolean;
+  // The left hand is a dynamic body pulled toward the pose. The pull is strong
+  // enough to carry a full beaker and soft enough that the glass can stop it.
+  driven: boolean;
 };
 
 export type Hands = {
@@ -100,12 +101,18 @@ export type Hands = {
   arm: Arm;
   left: Arm;
   leftMesh: THREE.SkinnedMesh;
-  // 0 is the right hand alone. 1 brings the left arm in until the fingertips meet.
+  // 0 is the right hand alone. 1 has faded the left arm in beside it.
   pair: number;
+  leftShoulder: THREE.Bone;
+  leftShoulderRest: THREE.Vector3;
   // Tilt of a held beaker in the player's frame: roll tips it left and right, pitch
   // tips it away from and toward the player.
   pourRoll: number;
   pourPitch: number;
+  // Side grip the left hand is reaching for, and the mass of a large vessel in reach.
+  aiming: boolean;
+  aimPoint: THREE.Vector3;
+  gripMass: number;
 };
 
 // Both arms live in one skinned mesh. The left triangles move to their own mesh so
@@ -133,12 +140,26 @@ export async function createHands(world: RAPIER.World): Promise<Hands> {
   });
 
   const leftMesh = splitLeftArm(model);
+  const leftShoulder = findBone(model, "ShoulderL");
   model.updateMatrixWorld(true);
-  const left = createArm(model, world, -1, WORLD_GROUP);
+  const left = createArm(model, world, -1, WORLD_GROUP | PROP_GROUP, true);
   left.raised = false;
   left.blend = 0;
   setArmSolid(left, false);
-  return { model, arm: createArm(model, world, 1, WORLD_GROUP | PROP_GROUP), left, leftMesh, pair: 0, pourRoll: 0, pourPitch: 0 };
+  return {
+    model,
+    arm: createArm(model, world, 1, WORLD_GROUP | PROP_GROUP, false),
+    left,
+    leftMesh,
+    pair: 0,
+    leftShoulder,
+    leftShoulderRest: leftShoulder.position.clone(),
+    pourRoll: 0,
+    pourPitch: 0,
+    aiming: false,
+    aimPoint: new THREE.Vector3(),
+    gripMass: 0,
+  };
 }
 
 // Moves every triangle bound mostly to the left shoulder chain onto a second skinned
@@ -204,14 +225,20 @@ function splitLeftArm(model: THREE.Object3D) {
   return leftMesh;
 }
 
-function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1, filter: number): Arm {
+function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1, filter: number, driven: boolean): Arm {
   const tag = side === 1 ? "R" : "L";
   const upper = findBone(model, `Upper_Arm${tag}`);
   const elbow = findBone(model, `Elbow${tag}`);
   const hand = findBone(model, `Hand${tag}`);
   const digits = fingerBones(model, tag).map(describeDigit);
 
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased());
+  // A driven hand has real mass. Gravity stays off; the pose spring carries it.
+  const body = world.createRigidBody(
+    driven
+      ? RAPIER.RigidBodyDesc.dynamic().setGravityScale(0).setCanSleep(false).setCcdEnabled(true).setLinearDamping(0.4)
+      : RAPIER.RigidBodyDesc.kinematicPositionBased(),
+  );
+  if (driven) body.setAdditionalMass(LEFT_MASS, true);
   const groups = collisionGroups(HAND_GROUP, filter);
   const colliders: RAPIER.Collider[] = [];
   const solid = (desc: RAPIER.ColliderDesc) => {
@@ -254,6 +281,7 @@ function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1, fil
     pads,
     fingertip: pads[2].bone,
     solid: true,
+    driven,
   };
 }
 
@@ -314,7 +342,6 @@ const spin = new THREE.Quaternion();
 const thumbSpin = new THREE.Quaternion();
 const upperPose = new THREE.Quaternion();
 const xAxis = new THREE.Vector3(1, 0, 0);
-const yAxis = new THREE.Vector3(0, 1, 0);
 const zAxis = new THREE.Vector3(0, 0, 1);
 const handPosition = new THREE.Vector3();
 const handQuaternion = new THREE.Quaternion();
@@ -329,7 +356,7 @@ const invPlayer = new THREE.Quaternion();
 const desired = new THREE.Quaternion();
 const tiltEuler = new THREE.Euler(0, 0, 0, "XZY");
 
-export function updateHands(hands: Hands, dt: number) {
+export function updateHands(hands: Hands, beakers: Beaker[], dt: number) {
   if (input.toggle) {
     input.gripLocked = !input.gripLocked;
     input.toggle = false;
@@ -355,104 +382,269 @@ export function updateHands(hands: Hands, dt: number) {
   hands.pair += (pairTarget - hands.pair) * (1 - Math.exp(-HAND_LERP * dt));
 
   const squeezing = input.squeeze || input.gripLocked;
-  // The right arm does not swing in. This pose is for holding something large
-  // between the two hands, and only the left arm comes across to it.
-  if (hands.pair > 0.2) holdFingertips(hands);
-  poseArm(hands.arm, dt, squeezing, 0);
-  poseArm(hands.left, dt, squeezing, hands.pair);
+  const showing = hands.left.raised || hands.pair > 0.02;
+  if (showing) hands.left.blend = 1;
+  const grip = showing && hands.left.raised && findSideGrip(hands, beakers);
+  if (grip) hands.left.gripRadius = gripRadius;
+  hands.aiming = grip;
+  if (grip) hands.aimPoint.copy(gripPoint);
+  hands.gripMass = showing && hands.left.raised ? nearestHeavy(hands, beakers) : 0;
+  // F closes both hands on a large vessel. The right arm itself does not move;
+  // only its fingers join the grip. That curl is not the one-hand pinch.
+  const paired = hands.left.raised && hands.pair > 0.35 && (grip || hands.gripMass > 0);
+  poseArm(hands.arm, dt, squeezing, false, paired ? 1 : 0);
+  poseArm(hands.left, dt, squeezing || paired, showing);
   hands.model.updateMatrixWorld(true);
-  clampLeftToTips(hands);
   const material = hands.leftMesh.material as THREE.MeshStandardMaterial;
   material.opacity = hands.pair;
   material.depthWrite = hands.pair > 0.85;
   hands.leftMesh.visible = hands.pair > 0.02;
   hands.leftMesh.castShadow = hands.pair > 0.35;
-  // The left hand only meets the bench. It stays out of the beakers, and it is
-  // gone entirely while the arm is faded so it cannot knock anything.
-  setArmSolid(hands.left, hands.pair > 0.2);
+  // The fade is only the mesh. The hand is solid as soon as F brings it in,
+  // so the grip is physics for the whole approach.
+  setArmSolid(hands.left, hands.left.raised && hands.pair > 0.05);
   hands.model.updateMatrixWorld(true);
   applyWristPour(hands);
   hands.model.updateMatrixWorld(true);
   syncArm(hands.arm);
-  syncArm(hands.left);
+  if (!hands.left.driven) syncArm(hands.left);
 }
 
 const tipA = new THREE.Vector3();
 const tipB = new THREE.Vector3();
+const across = new THREE.Vector3();
+const shoulderAt = new THREE.Vector3();
+const gripPoint = new THREE.Vector3();
+const fingerAxis = new THREE.Vector3();
+let gripRadius = PALM_GAP * 0.5;
 
-// A finger that has reached the other hand stops curling, the same way a pad stops
-// on glass. Opening still plays.
-function holdFingertips(hands: Hands) {
-  const block = (arm: Arm, other: Arm) => {
-    for (const pad of arm.pads) {
-      pad.bone.getWorldPosition(tipA);
-      let gap = Infinity;
-      for (const tip of other.pads) {
-        tip.bone.getWorldPosition(tipB);
-        gap = Math.min(gap, tipA.distanceTo(tipB));
-      }
-      const limit = pad.blocked ? TIP_GAP + 0.008 : TIP_GAP;
-      // Only ever sets the stop. Clearing it is aimFingers' job, so a pad that
-      // has met a beaker is not released just because the other hand is far.
-      if (gap < limit) pad.blocked = true;
+// The side grip of a wide vessel near the right hand. The left hand goes to
+// that grip, not to the far side of the body.
+function findSideGrip(hands: Hands, beakers: Beaker[]) {
+  hands.arm.hand.getWorldPosition(tipA);
+  let found = false;
+  let best = 0.3;
+  for (const beaker of beakers) {
+    const handle = beaker.handles[0];
+    if (beaker.radius <= BEAKER_RADIUS || !handle) continue;
+    const at = beaker.body.translation();
+    const rotation = beaker.body.rotation();
+    parentQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    tipB.copy(handle.center).applyQuaternion(parentQuat).add(shoulderAt.set(at.x, at.y, at.z));
+    const distance = tipA.distanceTo(tipB);
+    if (distance < best) {
+      best = distance;
+      found = true;
+      gripPoint.copy(tipB);
+      gripRadius = handle.radius * 1.08;
     }
-  };
-  block(hands.arm, hands.left);
-  block(hands.left, hands.arm);
+  }
+  return found;
 }
 
-// The left shoulder swings in until the fingertips meet, and no farther. The right
-// arm is already posed and is not moved again.
-function clampLeftToTips(hands: Hands) {
-  if (hands.pair < 0.02 || fingertipGap(hands) >= TIP_GAP) return;
-  let lo = 0;
-  let hi = hands.pair;
-  for (let i = 0; i < 6; i++) {
-    const mid = (lo + hi) * 0.5;
-    armSpread(hands.left, mid);
-    hands.model.updateMatrixWorld(true);
-    if (fingertipGap(hands) < TIP_GAP) hi = mid;
-    else lo = mid;
+// Mass of the nearest large vessel. A full one is mostly liquid, so the grip
+// scales off the body, not the empty glass.
+function nearestHeavy(hands: Hands, beakers: Beaker[]) {
+  hands.arm.hand.getWorldPosition(tipA);
+  let best = 0.55;
+  let mass = 0;
+  for (const beaker of beakers) {
+    if (beaker.radius <= BEAKER_RADIUS) continue;
+    const at = beaker.body.translation();
+    const distance = tipA.distanceTo(tipB.set(at.x, at.y, at.z));
+    if (distance < best) {
+      best = distance;
+      mass = beaker.body.mass();
+    }
   }
-  armSpread(hands.left, lo);
+  return mass;
+}
+
+// Slides the whole left arm sideways. Joint angles stay the chimeric pose.
+function placeLeft(hands: Hands, grip: THREE.Vector3 | null, amount: number) {
+  const shoulder = hands.leftShoulder;
+  shoulder.position.copy(hands.leftShoulderRest);
+  if (amount < 0.02) return;
+  const parent = hands.model.parent;
+  const shoulderParent = shoulder.parent;
+  if (!parent || !shoulderParent) return;
   hands.model.updateMatrixWorld(true);
+  hands.left.hand.getWorldPosition(tipB);
+  hands.arm.hand.getWorldPosition(tipA);
+  if (grip) {
+    hands.left.hand.getWorldQuaternion(handQuat);
+    fingerAxis.set(0, 1, 0).applyQuaternion(handQuat);
+    // The grip sits in the palm, where a small beaker would.
+    across.copy(grip).addScaledVector(fingerAxis, -0.03);
+  } else {
+    parent.getWorldQuaternion(parentQuat);
+    across.set(-1, 0, 0).applyQuaternion(parentQuat).multiplyScalar(PALM_GAP).add(tipA);
+  }
+  across.sub(tipB).multiplyScalar(amount);
+  shoulder.getWorldPosition(shoulderAt);
+  shoulderAt.add(across);
+  shoulderParent.worldToLocal(shoulderAt);
+  shoulder.position.copy(shoulderAt);
 }
 
-function fingertipGap(hands: Hands) {
-  let gap = Infinity;
-  for (const left of hands.left.pads) {
-    if (left.id === "thumb") continue;
-    left.bone.getWorldPosition(tipA);
-    for (const right of hands.arm.pads) {
-      if (right.id === "thumb") continue;
-      right.bone.getWorldPosition(tipB);
-      gap = Math.min(gap, tipA.distanceTo(tipB));
+const savedShoulder = new THREE.Vector3();
+const leftTarget = new THREE.Vector3();
+const palmShift = new THREE.Vector3();
+const vesselAxis = new THREE.Vector3();
+const vesselRel = new THREE.Vector3();
+const vesselQuat = new THREE.Quaternion();
+
+// Pulls the dynamic left hand toward the same pose placeLeft would use.
+// Clear air is that pose exactly. A large beaker stops the hand and the
+// squeeze scales with how heavy the glass is.
+export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
+  const arm = hands.left;
+  if (!arm.driven) return;
+  const shoulder = hands.leftShoulder;
+  const amount = hands.left.raised || hands.pair > 0.02 ? hands.pair : 0;
+  const aim = hands.aiming ? hands.aimPoint : null;
+  savedShoulder.copy(shoulder.position);
+  placeLeft(hands, aim, amount);
+  hands.model.updateMatrixWorld(true);
+  arm.hand.getWorldPosition(leftTarget);
+  arm.hand.getWorldQuaternion(handQuaternion);
+  if (!arm.solid) {
+    parkLeft(arm, leftTarget);
+    return;
+  }
+  shoulder.position.copy(savedShoulder);
+  hands.model.updateMatrixWorld(true);
+  arm.hand.getWorldPosition(handPosition);
+  palmShift.set(0, 0.045, 0).applyQuaternion(handQuaternion);
+  const hitMass = sampleMass(arm, beakers, leftTarget, handPosition, palmShift);
+  if (hitMass <= 0 && !leftBlocked) {
+    placeLeft(hands, aim, amount);
+    hands.model.updateMatrixWorld(true);
+    parkLeft(arm, leftTarget);
+    return;
+  }
+  const free = hitMass > 0 ? freeApproach(arm, beakers, handPosition, leftTarget, palmShift) : handPosition;
+  arm.body.setTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z }, true);
+  arm.body.setRotation({ x: handQuaternion.x, y: handQuaternion.y, z: handQuaternion.z, w: handQuaternion.w }, true);
+  syncPads(arm);
+  arm.body.setTranslation({ x: free.x, y: free.y, z: free.z }, true);
+  across.subVectors(leftTarget, free);
+  const dist = across.length();
+  const mass = Math.max(0.2, arm.body.mass());
+  const weight = Math.max(hands.gripMass, hitMass, 0.35) * 9.81;
+  const gripForce = hitMass > 0 ? Math.min(220, Math.max(45, weight * 1.8)) : 42;
+  const step = dist < 1e-4 || dt < 1e-4 ? 0 : Math.min(dist / dt, (gripForce * dt) / mass);
+  if (dist > 1e-4) across.multiplyScalar(step / dist);
+  else across.set(0, 0, 0);
+  arm.body.setLinvel({ x: across.x, y: across.y, z: across.z }, true);
+  arm.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  arm.body.wakeUp();
+}
+
+function parkLeft(arm: Arm, at: THREE.Vector3) {
+  arm.body.setTranslation({ x: at.x, y: at.y, z: at.z }, true);
+  arm.body.setRotation({ x: handQuaternion.x, y: handQuaternion.y, z: handQuaternion.z, w: handQuaternion.w }, true);
+  arm.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  arm.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  syncPads(arm);
+}
+
+function freeApproach(arm: Arm, beakers: Beaker[], from: THREE.Vector3, to: THREE.Vector3, shift: THREE.Vector3) {
+  let lo = 0;
+  let hi = 1;
+  if (sampleMass(arm, beakers, from, from, shift) <= 0) {
+    for (let i = 0; i < 8; i++) {
+      const mid = (lo + hi) / 2;
+      probe.lerpVectors(from, to, mid);
+      if (sampleMass(arm, beakers, probe, from, shift) > 0) hi = mid;
+      else lo = mid;
     }
   }
-  return gap;
+  return probe.lerpVectors(from, to, lo);
+}
+
+const probe = new THREE.Vector3();
+const palmProbe = new THREE.Vector3();
+
+function sampleMass(arm: Arm, beakers: Beaker[], at: THREE.Vector3, origin: THREE.Vector3, shift: THREE.Vector3) {
+  let mass = vesselMass(beakers, at);
+  palmProbe.copy(at).add(shift);
+  mass = Math.max(mass, vesselMass(beakers, palmProbe));
+  for (const pad of arm.pads) {
+    pad.bone.getWorldPosition(tipA);
+    tipA.add(at).sub(origin);
+    mass = Math.max(mass, vesselMass(beakers, tipA));
+  }
+  return mass;
+}
+
+function vesselMass(beakers: Beaker[], sample: THREE.Vector3) {
+  let mass = 0;
+  for (const beaker of beakers) {
+    if (beaker.radius <= BEAKER_RADIUS) continue;
+    const at = beaker.body.translation();
+    const rotation = beaker.body.rotation();
+    vesselQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    vesselAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
+    vesselRel.set(sample.x - at.x, sample.y - at.y, sample.z - at.z);
+    const axial = vesselRel.dot(vesselAxis);
+    vesselRel.addScaledVector(vesselAxis, -axial);
+    if (Math.abs(axial) > beaker.height / 2 + 0.025) continue;
+    if (vesselRel.length() < beaker.radius + 0.016) mass = Math.max(mass, beaker.body.mass());
+  }
+  return mass;
+}
+
+let leftBlocked = false;
+
+// After the step, the mesh goes where the soft hand actually stopped.
+export function followLeftHand(hands: Hands, world: RAPIER.World) {
+  const arm = hands.left;
+  if (!arm.driven || !arm.solid) {
+    leftBlocked = false;
+    return;
+  }
+  leftBlocked = false;
+  for (const collider of arm.colliders) {
+    world.contactPairsWith(collider, (other) => {
+      const membership = other.collisionGroups() & 0xffff;
+      if (membership & (WORLD_GROUP | PROP_GROUP)) leftBlocked = true;
+    });
+  }
+  const at = arm.body.translation();
+  arm.hand.getWorldPosition(tipB);
+  across.set(at.x - tipB.x, at.y - tipB.y, at.z - tipB.z);
+  if (across.lengthSq() < 1e-10) return;
+  const shoulder = hands.leftShoulder;
+  const shoulderParent = shoulder.parent;
+  if (!shoulderParent) return;
+  shoulder.getWorldPosition(shoulderAt);
+  shoulderAt.add(across);
+  shoulderParent.worldToLocal(shoulderAt);
+  shoulder.position.copy(shoulderAt);
+  hands.model.updateMatrixWorld(true);
 }
 
 function clampPour(angle: number) {
   return Math.max(-POUR_LIMIT, Math.min(POUR_LIMIT, angle));
 }
 
-function poseArm(arm: Arm, dt: number, squeezing: boolean, pinch: number) {
-  if (arm.side === 1) {
+function poseArm(arm: Arm, dt: number, squeezing: boolean, lockBlend: boolean, assist = 0) {
+  if (!lockBlend) {
     const raised = arm.raised ? 1 : 0;
     arm.blend += (raised - arm.blend) * (1 - Math.exp(-HAND_LERP * dt));
-  } else {
-    arm.blend = pinch;
   }
   const squeezeTarget = squeezing ? 1 : 0;
+  const curlTarget = Math.max(squeezeTarget, assist);
   const close = 1 - Math.exp(-SQUEEZE_LERP * dt);
   arm.squeeze += (squeezeTarget - arm.squeeze) * close;
   for (const pad of arm.pads) {
     // A pad that has met the glass stops. Opening still plays.
-    if (pad.blocked && squeezeTarget > pad.curl) continue;
-    pad.curl += (squeezeTarget - pad.curl) * close;
+    if (pad.blocked && curlTarget > pad.curl) continue;
+    pad.curl += (curlTarget - pad.curl) * close;
   }
 
-  armSpread(arm, pinch);
+  armSpread(arm);
 
   arm.hand.quaternion.copy(arm.restHand);
 
@@ -484,22 +676,14 @@ function poseArm(arm: Arm, dt: number, squeezing: boolean, pinch: number) {
   }
 }
 
-function armSpread(arm: Arm, pinch: number) {
+function armSpread(arm: Arm) {
   const drop = (1 - arm.blend) * DROP_ANGLE;
-  // Only the left arm pinches. A zero pinch leaves the right shoulder on its splay.
-  const spread = SPLAY_ANGLE * (1 - pinch) - (arm.side === 1 ? 0 : LEFT_PINCH) * pinch;
   upperPose.copy(arm.restUpper);
-  spin.setFromAxisAngle(zAxis, arm.side * spread);
+  spin.setFromAxisAngle(zAxis, arm.side * SPLAY_ANGLE);
   upperPose.multiply(spin);
   spin.setFromAxisAngle(xAxis, drop);
   upperPose.multiply(spin);
   arm.upper.quaternion.copy(upperPose);
-  // Local Y lowers the left hand onto the right fingertips. The shoulder stays a
-  // ball joint here; the elbow is left on its hinge so the forearm does not roll.
-  if (arm.side === -1 && pinch > 0) {
-    spin.setFromAxisAngle(yAxis, -0.5 * pinch);
-    arm.upper.quaternion.multiply(spin);
-  }
   spin.setFromAxisAngle(xAxis, drop * 0.65);
   arm.elbow.quaternion.copy(arm.restElbow).multiply(spin);
 }
@@ -548,6 +732,7 @@ export function settleHand(hands: Hands, world: RAPIER.World) {
     let slide = 0;
     const consider = (arm: Arm) => {
       if (!arm.solid && arm.side === -1) return;
+      if (arm.driven) return;
       const sampleArm = (x: number, y: number, z: number) => {
         surfaceRay.origin.x = x;
         surfaceRay.origin.y = y + SURFACE_REACH;
@@ -615,14 +800,21 @@ export function settleHand(hands: Hands, world: RAPIER.World) {
 function syncArm(arm: Arm) {
   arm.hand.getWorldPosition(handPosition);
   arm.hand.getWorldQuaternion(handQuaternion);
-  arm.body.setNextKinematicTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z });
-  arm.body.setNextKinematicRotation({
-    x: handQuaternion.x,
-    y: handQuaternion.y,
-    z: handQuaternion.z,
-    w: handQuaternion.w,
-  });
+  if (!arm.driven) {
+    arm.body.setNextKinematicTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z });
+    arm.body.setNextKinematicRotation({
+      x: handQuaternion.x,
+      y: handQuaternion.y,
+      z: handQuaternion.z,
+      w: handQuaternion.w,
+    });
+  }
+  syncPads(arm);
+}
 
+function syncPads(arm: Arm) {
+  arm.hand.getWorldPosition(handPosition);
+  arm.hand.getWorldQuaternion(handQuaternion);
   handInverse.copy(handQuaternion).invert();
   for (const tip of arm.pads) {
     tip.bone.getWorldPosition(tipPosition);

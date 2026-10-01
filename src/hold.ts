@@ -59,6 +59,12 @@ const axis = new THREE.Vector3();
 const rel = new THREE.Vector3();
 const beakerPos = new THREE.Vector3();
 const beakerAxis = new THREE.Vector3();
+// The part of a vessel, body or handle, that the last cylinderGap call found nearest.
+const touchPos = new THREE.Vector3();
+const touchAxis = new THREE.Vector3();
+let touchRadius = 0;
+const partPos = new THREE.Vector3();
+const partAxis = new THREE.Vector3();
 const thumbRadial = new THREE.Vector3();
 const fingerRadial = new THREE.Vector3();
 const solvedA = new THREE.Vector3();
@@ -79,19 +85,18 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
     else grip.age += dt;
   }
 
-  if (arm.squeeze >= GRAB_SQUEEZE && !hold.grips.some((grip) => grip.arm === arm)) {
+  // F is a two-hand physics grip. A weld would turn the heavy beaker off against
+  // the palms, so the one-hand pinch stays for the right hand alone.
+  if (!hands.left.raised && arm.squeeze >= GRAB_SQUEEZE && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = pinch(arm, hold, beakers);
     if (beaker) grab(hold, hands, arm, beaker, world);
   }
 
-  settleQuiet(hold, arm, dt);
+  settleQuiet(hold, hands, dt);
   const held = hold.grips.find((grip) => grip.arm === arm);
-  // The right hand keeps its own curl. F does not retarget it. The left hand, once
-  // it is in, stays open for something larger than a beaker and stops on the
-  // right fingertips instead of wrapping a glass.
-  aimFingers(arm, beakers, held?.beaker ?? gripping?.beaker);
-  if (hands.pair < 0.45) aimFingers(hands.left, beakers, undefined);
-  else hands.left.gripRadius = 0.3;
+  const reach = hands.left.raised ? 0.28 : NEAR;
+  aimFingers(arm, beakers, held?.beaker ?? gripping?.beaker, reach);
+  aimFingers(hands.left, beakers, undefined, reach);
 }
 
 function grab(hold: Hold, hands: Hands, arm: Arm, beaker: Beaker, world: RAPIER.World) {
@@ -198,7 +203,7 @@ function sideForce(world: RAPIER.World, grip: Grip) {
   return impulse;
 }
 
-function settleQuiet(hold: Hold, arm: Arm, dt: number) {
+function settleQuiet(hold: Hold, hands: Hands, dt: number) {
   for (let i = hold.quiet.length - 1; i >= 0; i--) {
     const item = hold.quiet[i];
     if (hold.grips.some((grip) => grip.beaker === item.beaker)) continue;
@@ -206,12 +211,16 @@ function settleQuiet(hold: Hold, arm: Arm, dt: number) {
     let clear = item.time > 0.6;
     if (!clear) {
       clear = true;
-      for (const pad of arm.pads) {
-        pad.bone.getWorldPosition(point);
-        if (cylinderGap(point, item.beaker) < UNBLOCK) {
-          clear = false;
-          break;
+      for (const arm of [hands.arm, hands.left]) {
+        if (!arm.solid) continue;
+        for (const pad of arm.pads) {
+          pad.bone.getWorldPosition(point);
+          if (cylinderGap(point, item.beaker) < UNBLOCK) {
+            clear = false;
+            break;
+          }
         }
+        if (!clear) break;
       }
     }
     if (!clear) continue;
@@ -220,9 +229,15 @@ function settleQuiet(hold: Hold, arm: Arm, dt: number) {
   }
 }
 
-function aimFingers(arm: Arm, beakers: Beaker[], held: Beaker | undefined) {
-  let radius = held ? held.radius * 1.08 : FIST_RADIUS;
-  let nearest = held ? 0 : NEAR;
+function aimFingers(arm: Arm, beakers: Beaker[], held: Beaker | undefined, reach = NEAR) {
+  let radius = FIST_RADIUS;
+  if (held) {
+    // Close to whatever part the thumb is on, so a handle is not held open to the tray's width.
+    arm.pads.find((pad) => pad.id === "thumb")?.bone.getWorldPosition(point);
+    cylinderGap(point, held);
+    radius = touchRadius * 1.08;
+  }
+  let nearest = held ? 0 : reach;
   for (const pad of arm.pads) {
     pad.bone.getWorldPosition(point);
     let gap = Infinity;
@@ -231,7 +246,7 @@ function aimFingers(arm: Arm, beakers: Beaker[], held: Beaker | undefined) {
       gap = Math.min(gap, distance);
       if (!held && distance < nearest) {
         nearest = distance;
-        radius = beaker.radius * 1.08;
+        radius = touchRadius * 1.08;
       }
     }
     const limit = pad.blocked ? UNBLOCK : TOUCH;
@@ -279,29 +294,50 @@ function pinch(arm: Arm, hold: Hold, beakers: Beaker[]) {
 function setHandCollision(beaker: Beaker, hit: boolean) {
   const filter = hit ? 0xffff : 0xffff ^ HAND;
   beaker.collider.setCollisionGroups((filter << 16) | PROP);
+  for (const handle of beaker.handles) handle.collider.setCollisionGroups((filter << 16) | PROP);
 }
 
+// Direction out from the axis of the part nearest the sample.
 function radial(sample: THREE.Vector3, beaker: Beaker, out: THREE.Vector3) {
-  placeBeaker(beaker);
-  rel.copy(sample).sub(beakerPos);
-  rel.addScaledVector(beakerAxis, -rel.dot(beakerAxis));
+  cylinderGap(sample, beaker);
+  rel.copy(sample).sub(touchPos);
+  rel.addScaledVector(touchAxis, -rel.dot(touchAxis));
   const length = rel.length();
   if (length < 1e-4) return false;
   out.copy(rel).multiplyScalar(1 / length);
   return true;
 }
 
+// Gap to the nearest part of the vessel: its own cylinder or any handle.
 function cylinderGap(sample: THREE.Vector3, beaker: Beaker) {
   placeBeaker(beaker);
-  const half = beaker.height / 2;
-  rel.copy(sample).sub(beakerPos);
-  const axial = rel.dot(beakerAxis);
-  rel.addScaledVector(beakerAxis, -axial);
+  let best = partGap(sample, beakerPos, beakerAxis, beaker.radius, beaker.height / 2);
+  touchPos.copy(beakerPos);
+  touchAxis.copy(beakerAxis);
+  touchRadius = beaker.radius;
+  for (const handle of beaker.handles) {
+    partPos.copy(handle.center).applyQuaternion(bodyQuat).add(beakerPos);
+    partAxis.copy(handle.axis).applyQuaternion(bodyQuat);
+    const gap = partGap(sample, partPos, partAxis, handle.radius, handle.half);
+    if (gap < best) {
+      best = gap;
+      touchPos.copy(partPos);
+      touchAxis.copy(partAxis);
+      touchRadius = handle.radius;
+    }
+  }
+  return best;
+}
+
+function partGap(sample: THREE.Vector3, center: THREE.Vector3, axis: THREE.Vector3, radius: number, half: number) {
+  rel.copy(sample).sub(center);
+  const axial = rel.dot(axis);
+  rel.addScaledVector(axis, -axial);
   const radialDistance = rel.length();
   const axialGap = Math.abs(axial) - half;
-  if (axialGap <= 0) return radialDistance - beaker.radius;
-  if (radialDistance <= beaker.radius) return axialGap;
-  return Math.hypot(axialGap, radialDistance - beaker.radius);
+  if (axialGap <= 0) return radialDistance - radius;
+  if (radialDistance <= radius) return axialGap;
+  return Math.hypot(axialGap, radialDistance - radius);
 }
 
 function placeBeaker(beaker: Beaker) {

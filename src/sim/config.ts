@@ -6,7 +6,8 @@ export const config = {
     jitterDeg: 15,
     minSeparationDeg: 30,
   },
-  deflectionScale: 1,
+  // A stock 10mL sip is 0.1 mass. At 0.35 a matched sip stays mild and a matched beaker is an overdose.
+  deflectionScale: 0.35,
   symptoms: {
     mild: 0.25,
     moderate: 0.5,
@@ -36,5 +37,15 @@ export const config = {
   body: {
     integrity: 1,
     adaptation: 0,
+  },
+  damage: {
+    overdrive: 0.8,
+    noise: 0.15,
+    regen: 0.02,
+    critical: 0.95,
+    criticalHold: 2.5,
+    sideChance: 0.8,
+    sideDrive: 0.35,
+    sideDecay: 1.2,
   },
 } as const;

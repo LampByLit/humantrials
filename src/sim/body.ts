@@ -1,7 +1,7 @@
 import { analyzeBalance } from "./balance";
 import { derive, draw, type Solution } from "./compound";
 import { config } from "./config";
-import { drive } from "./effect";
+import { drive, noise } from "./effect";
 import { createRng } from "./rng";
 
 export const organNames = ["heart", "brain", "liver"] as const;
@@ -15,10 +15,17 @@ export type Organ = {
   integrity: number;
   deflection: number;
   adaptation: number;
+  side: number;
 };
+
+export type Condition = "steady" | "mild" | "moderate" | "severe" | "critical" | "dead";
 
 export type Body = {
   organs: Organ[];
+  alive: boolean;
+  critical: number;
+  cause: string | null;
+  rng: () => number;
 };
 
 export type Dose = {
@@ -78,7 +85,12 @@ export function createBody(seed: number): Body {
         integrity: config.body.integrity,
         deflection: 0,
         adaptation: config.body.adaptation,
+        side: 0,
       })),
+      alive: true,
+      critical: 0,
+      cause: null,
+      rng,
     };
   }
   throw new Error("receptor generation failed");
@@ -117,6 +129,8 @@ export function swallow(blood: Blood, dose: { hex: string; mass: number }) {
 }
 
 export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
+  if (!body.alive) return symptomsFrom(body.organs);
+
   const liver = body.organs.find((organ) => organ.name === "liver");
   const rate = clearanceRate(liver);
   for (const dose of blood.doses) dose.mass *= Math.exp(-rate * dt);
@@ -129,9 +143,58 @@ export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
     blood.pending.splice(i, 1);
   }
 
+  const burden = noiseBurden(blood.doses);
+  for (const organ of body.organs) organ.side *= Math.exp(-config.damage.sideDecay * dt);
+  const chance = 1 - Math.exp(-config.damage.sideChance * burden * dt);
+  if (burden > 0 && body.rng() < chance) {
+    const organ = body.organs[Math.floor(body.rng() * body.organs.length)];
+    const sign = body.rng() < 0.5 ? -1 : 1;
+    organ.side += sign * config.damage.sideDrive;
+  }
+
   const next = evaluate(body.organs, blood.doses);
+  for (const organ of next.organs) {
+    const over = Math.max(0, Math.abs(organ.deflection) - config.symptoms.severe);
+    const overdrive = config.damage.overdrive * over * over * dt;
+    const dirty = organ.name === "liver" ? config.damage.noise * burden * dt : 0;
+    const taken = overdrive + dirty;
+    if (taken > 0) organ.integrity = Math.max(0, organ.integrity - taken);
+    else if (organ.integrity > 0) {
+      organ.integrity = Math.min(1, organ.integrity + config.damage.regen * (1 - organ.integrity) * dt);
+    }
+  }
   body.organs = next.organs;
+  applyCritical(body, dt);
   return next.symptoms;
+}
+
+function noiseBurden(doses: readonly Dose[]) {
+  let total = 0;
+  for (const dose of doses) total += noise(derive(dose.hex), dose.mass);
+  return total;
+}
+
+function applyCritical(body: Body, dt: number) {
+  const heart = body.organs.find((organ) => organ.name === "heart");
+  const brain = body.organs.find((organ) => organ.name === "brain");
+  if (heart && heart.integrity <= 0) return die(body, "the heart gives out");
+  if (brain && brain.integrity <= 0) return die(body, "the brain gives out");
+  const heartCrash = !!heart && Math.abs(heart.deflection) >= config.damage.critical;
+  const brainCrash = !!brain && Math.abs(brain.deflection) >= config.damage.critical;
+  if (!heartCrash && !brainCrash) {
+    body.critical = 0;
+    return;
+  }
+  body.critical += dt;
+  if (body.critical < config.damage.criticalHold) return;
+  if (heartCrash && brainCrash) return die(body, "the heart and breathing fail");
+  if (heartCrash) return die(body, "cardiac arrest");
+  die(body, "breathing stops");
+}
+
+function die(body: Body, cause: string) {
+  body.alive = false;
+  body.cause = cause;
 }
 
 function clearanceRate(liver: Organ | undefined) {
@@ -142,12 +205,28 @@ function clearanceRate(liver: Organ | undefined) {
 
 export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { organs: Organ[]; symptoms: Symptom[] } {
   const next = organs.map((organ) => {
-    let totalDrive = 0;
+    let totalDrive = organ.side;
     for (const dose of doses) totalDrive += drive(derive(dose.hex), organ, dose.mass);
+    totalDrive *= sensitivity(organ.integrity);
     const deflection = Math.tanh((totalDrive - organ.adaptation) / config.deflectionScale);
     return { ...organ, deflection };
   });
   return { organs: next, symptoms: symptomsFrom(next) };
+}
+
+export function conditionOf(body: Body, symptoms: readonly Symptom[]): Condition {
+  if (!body.alive) return "dead";
+  if (body.critical > 0) return "critical";
+  const rank: Record<SymptomBand, number> = { mild: 1, moderate: 2, severe: 3 };
+  let worst: Condition = "steady";
+  let worstRank = 0;
+  for (const symptom of symptoms) {
+    if (rank[symptom.band] > worstRank) {
+      worst = symptom.band;
+      worstRank = rank[symptom.band];
+    }
+  }
+  return worst;
 }
 
 export function symptomsFrom(organs: readonly Organ[]): Symptom[] {

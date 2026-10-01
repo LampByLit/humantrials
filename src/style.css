@@ -38,13 +38,70 @@ canvas {
   position: fixed;
   left: 16px;
   bottom: 16px;
-  width: 250px;
+  width: 320px;
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
   padding: 10px 12px;
-  background: rgba(8, 10, 12, 0.55);
+  background: rgba(8, 10, 12, 0.72);
   border-radius: 6px;
   font-size: 13px;
   line-height: 1.35;
   pointer-events: none;
+}
+
+#health .condition {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+#health.steady .condition { color: #d7e0d4; }
+#health.mild .condition { color: #e6d48a; }
+#health.moderate .condition { color: #e2a15a; }
+#health.severe .condition,
+#health.critical .condition { color: #e25b4a; }
+#health.dead .condition { color: #ffd0c8; }
+
+#health .headline,
+#health .failing {
+  margin-top: 4px;
+}
+
+#health .failing {
+  color: #e25b4a;
+}
+
+#health .section {
+  margin-top: 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+#health .dose {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+#health .dose i {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  flex: none;
+}
+
+#health .dose span {
+  flex: 1;
+}
+
+#health .dose b {
+  font-weight: 600;
 }
 
 #health .organ {
@@ -56,8 +113,24 @@ canvas {
 }
 
 #health .name {
+  display: flex;
+  justify-content: space-between;
   text-transform: capitalize;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#health .integrity {
+  height: 4px;
+  margin-top: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#health .integrity div {
+  height: 100%;
+  background: #8fbf8a;
 }
 
 #health .track {
