@@ -37,6 +37,8 @@ type Grip = {
   handRel: THREE.Quaternion;
   age: number;
   stuck: number;
+  // Held because F put it between both hands, not because the right hand pinched.
+  paired: boolean;
 };
 
 type Quiet = { beaker: Beaker; time: number };
@@ -81,16 +83,32 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
 
   for (let i = hold.grips.length - 1; i >= 0; i--) {
     const grip = hold.grips[i];
+    if (grip.paired) {
+      if (!hands.left.raised) release(hold, grip, world);
+      else grip.age += dt;
+      continue;
+    }
     if (grip.arm.squeeze < RELEASE_SQUEEZE || lost(grip, world, dt)) release(hold, grip, world);
     else grip.age += dt;
   }
 
-  // F is a two-hand physics grip. A weld would turn the heavy beaker off against
-  // the palms, so the one-hand pinch stays for the right hand alone.
+  // A large beaker between the palms is carried by the same joint as a pinch.
+  // Squeezing it between the hands is what sends it flying.
+  if (hands.left.raised && hands.pair > 0.45 && !hold.grips.some((grip) => grip.arm === arm)) {
+    const beaker = betweenHands(hands, hold, beakers);
+    if (beaker) {
+      const at = beaker.body.translation();
+      anchor.set(at.x, at.y, at.z);
+      grab(hold, hands, arm, beaker, world);
+      hold.grips[hold.grips.length - 1].paired = true;
+    }
+  }
+
   if (!hands.left.raised && arm.squeeze >= GRAB_SQUEEZE && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = pinch(arm, hold, beakers);
     if (beaker) grab(hold, hands, arm, beaker, world);
   }
+  hands.carrying = hold.grips.some((grip) => grip.paired);
 
   settleQuiet(hold, hands, dt);
   const held = hold.grips.find((grip) => grip.arm === arm);
@@ -144,6 +162,7 @@ function grab(hold: Hold, hands: Hands, arm: Arm, beaker: Beaker, world: RAPIER.
     handRel: invQuat.copy(handQuat).invert().multiply(bodyQuat).clone(),
     age: 0,
     stuck: 0,
+    paired: false,
   });
 }
 
@@ -253,6 +272,29 @@ function aimFingers(arm: Arm, beakers: Beaker[], held: Beaker | undefined, reach
     pad.blocked = gap < limit;
   }
   arm.gripRadius = Math.max(0.012, radius);
+}
+
+// A large vessel sitting in the gap, with both hands on the glass.
+function betweenHands(hands: Hands, hold: Hold, beakers: Beaker[]) {
+  hands.arm.hand.getWorldPosition(handPos);
+  hands.left.hand.getWorldPosition(fingerPos);
+  let beaker: Beaker | null = null;
+  let best = 0.14;
+  for (const candidate of beakers) {
+    if (candidate.radius <= BEAKER_RADIUS) continue;
+    if (hold.grips.some((grip) => grip.beaker === candidate)) continue;
+    const at = candidate.body.translation();
+    bodyPos.set(at.x, at.y, at.z);
+    const gapR = handPos.distanceTo(bodyPos) - candidate.radius;
+    const gapL = fingerPos.distanceTo(bodyPos) - candidate.radius;
+    if (gapR > 0.05 || gapL > 0.05) continue;
+    const score = gapR + gapL;
+    if (score < best) {
+      best = score;
+      beaker = candidate;
+    }
+  }
+  return beaker;
 }
 
 // Thumb on one side of the cylinder, a finger on the other. The anchor is the

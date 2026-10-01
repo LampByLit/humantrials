@@ -113,6 +113,8 @@ export type Hands = {
   aiming: boolean;
   aimPoint: THREE.Vector3;
   gripMass: number;
+  // A large beaker is carried between the hands. The fingers are only visual then.
+  carrying: boolean;
 };
 
 // Both arms live in one skinned mesh. The left triangles move to their own mesh so
@@ -159,6 +161,7 @@ export async function createHands(world: RAPIER.World): Promise<Hands> {
     aiming: false,
     aimPoint: new THREE.Vector3(),
     gripMass: 0,
+    carrying: false,
   };
 }
 
@@ -389,9 +392,9 @@ export function updateHands(hands: Hands, beakers: Beaker[], dt: number) {
   hands.aiming = grip;
   if (grip) hands.aimPoint.copy(gripPoint);
   hands.gripMass = showing && hands.left.raised ? nearestHeavy(hands, beakers) : 0;
-  // F closes both hands on a large vessel. The right arm itself does not move;
-  // only its fingers join the grip. That curl is not the one-hand pinch.
-  const paired = hands.left.raised && hands.pair > 0.35 && (grip || hands.gripMass > 0);
+  // F closes both hands only once the beaker is actually carried. Curling on the
+  // way in is what knocks it off the bench.
+  const paired = hands.left.raised && hands.carrying;
   poseArm(hands.arm, dt, squeezing, false, paired ? 1 : 0);
   poseArm(hands.left, dt, squeezing || paired, showing);
   hands.model.updateMatrixWorld(true);
@@ -531,8 +534,8 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   across.subVectors(leftTarget, free);
   const dist = across.length();
   const mass = Math.max(0.2, arm.body.mass());
-  const weight = Math.max(hands.gripMass, hitMass, 0.35) * 9.81;
-  const gripForce = hitMass > 0 ? Math.min(220, Math.max(45, weight * 1.8)) : 42;
+  // Once the joint has the beaker, the hand just rests on the glass.
+  const gripForce = hands.carrying ? 0 : 12;
   const step = dist < 1e-4 || dt < 1e-4 ? 0 : Math.min(dist / dt, (gripForce * dt) / mass);
   if (dist > 1e-4) across.multiplyScalar(step / dist);
   else across.set(0, 0, 0);
