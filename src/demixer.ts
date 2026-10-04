@@ -90,7 +90,10 @@ function show(hex: string | null) {
 
 function half(hex: string, sample: Solution): Solution {
   const volume = sample.volume / 2;
-  return { ...solutionFromHex(parseInt(hex.slice(1), 16), volume, 0), mass: sample.mass / 2, cloud: sample.cloud / 2 };
+  const concentration = sample.volume > 1e-12 ? sample.mass / sample.volume : 0;
+  const made = solutionFromHex(parseInt(hex.slice(1), 16), volume, concentration);
+  made.cloud = sample.cloud / 2;
+  return made;
 }
 
 /** The two faucets, for the fluid sim to run. */

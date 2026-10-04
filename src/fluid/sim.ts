@@ -1,8 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { vesselContains, type Beaker } from "../lab";
-import { CHANNEL_FLOOR } from "../sim/compound";
-import { mixIn, portion, STOCK_CONCENTRATION, water, type Solution } from "./solution";
+import { mixIn, portion, visibleRgb, water, type Solution } from "./solution";
 import { lowestRim, pourFlow, solveSurface, type Vec3 } from "./volume";
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -13,8 +12,8 @@ const MAX_RINGS = 64;
 const RING_SEGMENTS = 7;
 const MOUTH_SCALE = 0.9;
 const RAY_GROUPS = ((0x0002 | 0x0008) << 16) | 0xffff;
-// Light through a dye falls off with concentration (Beer-Lambert): a stock shows its hex,
-// diluting fades it toward clear water, and cloud scatters it back toward opaque white.
+// A stock shows its hex. Mixed liquids keep a dye blend of the colors poured in,
+// and cloud scatters the result back toward opaque white.
 const WATER_TINT = new THREE.Color().setRGB(0.82, 0.9, 0.95, THREE.SRGBColorSpace);
 const WHITE = new THREE.Color(1, 1, 1);
 const WATER_ALPHA = 0.16;
@@ -115,7 +114,6 @@ const clipV = new THREE.Vector3();
 const quat = new THREE.Quaternion();
 const inv = new THREE.Quaternion();
 const color = new THREE.Color();
-const hexColor = new THREE.Color();
 const dummy = new THREE.Object3D();
 const matrix = new THREE.Matrix4();
 
@@ -385,17 +383,15 @@ function createStream(scene: THREE.Scene, envMap: THREE.Texture | null, tint: TH
 
 /** Writes the liquid's colour into `out` and returns its opacity. */
 function shade(liquid: Solution, out: THREE.Color): number {
-  const volume = liquid.volume;
-  const depth = volume > 1e-9 ? liquid.mass / volume / STOCK_CONCENTRATION : 0;
-  const through = (channel: number) => Math.pow(Math.max(CHANNEL_FLOOR, channel), depth);
-  const r = through(liquid.r);
-  const g = through(liquid.g);
-  const b = through(liquid.b);
-  const absorb = 1 - Math.min(r, g, b);
-  const cloud = volume > 1e-9 ? 1 - Math.exp((-CLOUD_DENSITY * liquid.cloud) / volume) : 0;
-  hexColor.setRGB(r, g, b, THREE.SRGBColorSpace);
-  out.copy(WATER_TINT).lerp(WHITE, absorb).multiply(hexColor);
-  out.lerp(WHITE, cloud);
+  const [r, g, b] = visibleRgb(liquid);
+  const cloud = liquid.volume > 1e-9 ? 1 - Math.exp((-CLOUD_DENSITY * liquid.cloud) / liquid.volume) : 0;
+  const undyed = liquid.mass <= 1e-8 && cloud <= 1e-4;
+  if (undyed) out.copy(WATER_TINT);
+  else {
+    out.setRGB(r, g, b, THREE.SRGBColorSpace);
+    out.lerp(WHITE, cloud);
+  }
+  const absorb = undyed ? 0 : 1 - Math.min(r, g, b);
   const clear = (1 - WATER_ALPHA) * (1 - DYE_ALPHA * Math.pow(absorb, 0.7)) * (1 - cloud);
   return Math.min(MAX_ALPHA, 1 - clear);
 }
