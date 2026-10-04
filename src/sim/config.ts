@@ -48,4 +48,13 @@ export const config = {
     sideDrive: 0.35,
     sideDecay: 1.2,
   },
+  // Aftermath feelings are rare: a real peak, then the dose has to leave, and only a few
+  // substances (or a few pairs taken together) leave a line at all.
+  affect: {
+    live: 0.02,
+    peak: 0.05,
+    echo: 0.008,
+    hold: 8,
+    quiet: 50,
+  },
 } as const;

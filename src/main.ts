@@ -11,7 +11,9 @@ import { createLab, readIntake, syncBeakers, type Beaker } from "./lab";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
-import { conditionOf, createBlood, createBody, pilotOpen, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
+import { abilityNotes, bloodCard, organClass, organTone, receiptCard, symptomCard, tracePolyline, traceSamples, vitalReadout } from "./healthHud";
+import { createAffect, stepAffect } from "./sim/affect";
+import { createBlood, createBody, pilotOpen, stepBody, swallow, symptomsFrom, type Blood, type OrganName } from "./sim/body";
 import { chemLabel, isCatalog } from "./sim/colorName";
 import { senseOf, type Sense } from "./sim/reactions";
 import { createTitle } from "./title";
@@ -27,7 +29,36 @@ document.body.prepend(canvas);
 const prompt = document.getElementById("prompt")!;
 const pourReadout = document.getElementById("pour")!;
 const eyeReadout = document.getElementById("eyed")!;
-const healthReadout = document.getElementById("health")!;
+const organMarks: Record<OrganName, SVGElement> = {
+  heart: document.querySelector("#organ-heart") as SVGElement,
+  brain: document.querySelector("#organ-brain") as SVGElement,
+  liver: document.querySelector("#organ-liver") as SVGElement,
+};
+const vitalPulse = document.getElementById("vital-pulse")!;
+const vitalBreath = document.getElementById("vital-breath")!;
+const vitalTemp = document.getElementById("vital-temp")!;
+const vitalClear = document.getElementById("vital-clear")!;
+const waves: Record<OrganName, SVGPolylineElement> = {
+  heart: document.querySelector("#wave-heart") as SVGPolylineElement,
+  brain: document.querySelector("#wave-brain") as SVGPolylineElement,
+  liver: document.querySelector("#wave-liver") as SVGPolylineElement,
+};
+const hurts: Record<OrganName, HTMLElement> = {
+  heart: document.getElementById("hurt-heart")!,
+  brain: document.getElementById("hurt-brain")!,
+  liver: document.getElementById("hurt-liver")!,
+};
+const traces: Record<OrganName, HTMLElement> = {
+  heart: document.getElementById("trace-heart")!,
+  brain: document.getElementById("trace-brain")!,
+  liver: document.getElementById("trace-liver")!,
+};
+const symptoms = document.getElementById("symptoms")!;
+const bloodReadout = document.getElementById("blood")!;
+const affectReadout = document.getElementById("affect")!;
+const abilities = document.getElementById("abilities")!;
+const affect = createAffect();
+const receipt = document.getElementById("receipt")!;
 const veil = document.getElementById("veil")!;
 const restart = document.getElementById("restart") as HTMLButtonElement;
 restart.addEventListener("click", () => location.reload());
@@ -110,7 +141,7 @@ loading.classList.add("hidden");
 input.ready = true;
 
 if (import.meta.env.DEV) {
-  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood } });
+  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood, affect } });
 }
 
 const grounded = { value: true };
@@ -176,11 +207,12 @@ function frame(now: number) {
   readIntake();
   showEyes(eyeReadout, camera, hands, beakers, blood);
   if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
-  const symptoms = stepBody(body, blood, dt);
+  stepBody(body, blood, dt);
+  if (body.alive) stepAffect(affect, blood.doses, dt);
   const felt = senseOf(body.organs, blood.doses, body.alive);
   applyFeel(player, felt);
   tintSkin(hands, felt);
-  renderHealth(healthReadout, body, blood, symptoms);
+  renderHealth(body, blood, felt.rate, player.clock);
   renderVeil(veil, canvas, felt, player.clock);
   if (pouring) {
     const at = pouring.body.translation();
@@ -309,62 +341,58 @@ function renderVeil(root: HTMLElement, canvas: HTMLCanvasElement, sense: Sense, 
   canvas.style.transform = Math.abs(warp) > 0.002 ? `scale(${(1 + warp).toFixed(4)})` : "";
 }
 
-function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Symptom[]) {
-  const condition = conditionOf(body, symptoms);
-  root.className = condition;
-  const headline = body.cause
-    ? body.cause
-    : symptoms.length > 0
-      ? symptoms.map((symptom) => symptom.text).join(" · ")
-      : "Nothing in the blood is moving you.";
-  const failing =
-    body.alive && body.critical > 0
-      ? `<div class="failing">Heart or breathing failing for ${body.critical.toFixed(1)}s</div>`
-      : "";
-  const organs = body.organs
-    .map((organ) => {
-      const symptom = symptoms.find((item) => item.organ === organ.name);
-      const text = symptom ? `${symptom.band} · ${symptom.text}` : "steady";
-      const mark = ((organ.deflection + 1) * 50).toFixed(1);
-      const signed = `${organ.deflection >= 0 ? "+" : ""}${organ.deflection.toFixed(2)}`;
-      const integrity = Math.round(organ.integrity * 100);
-      return `<div class="organ"><div class="name">${organ.name}<span>${signed}</span></div><div class="track"><div class="mark" style="left:${mark}%"></div></div><div>${text}</div><div class="integrity"><div style="width:${integrity}%"></div></div><div class="meta">integrity ${integrity}%</div></div>`;
-    })
-    .join("");
-  const circulating = tally(blood.doses);
-  const bloodLines =
-    circulating.length === 0
-      ? `<div class="meta">Blood is clear</div>`
-      : circulating
-          .map((dose) => `<div class="dose"><i style="background:${dose.hex}"></i><span>${chemLabel(dose.hex)}</span><b>${formatMass(dose.mass)}</b></div>`)
-          .join("");
-  const pending =
-    blood.pending.length === 0
-      ? ""
-      : `<div class="section">Coming on</div>` +
-        blood.pending
-          .map(
-            (dose) =>
-              `<div class="dose"><i style="background:${dose.hex}"></i><span>${chemLabel(dose.hex)}</span><b>${formatMass(dose.mass)} · ${Math.max(0, dose.left).toFixed(1)}s</b></div>`,
-          )
-          .join("");
-  root.innerHTML = `<div class="condition">${condition}</div><div class="headline">${headline}</div>${failing}${organs}<div class="section">In the blood</div>${bloodLines}${pending}`;
-}
+let receiptWritten = false;
 
-function tally(doses: { hex: string; mass: number }[]) {
-  const order: string[] = [];
-  const mass = new Map<string, number>();
-  for (const dose of doses) {
-    if (!mass.has(dose.hex)) order.push(dose.hex);
-    mass.set(dose.hex, (mass.get(dose.hex) ?? 0) + dose.mass);
+function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, rate: number, time: number) {
+  if (!body.alive) {
+    if (!receiptWritten) {
+      receipt.innerHTML = receiptCard(body, blood);
+      receiptWritten = true;
+    }
+    return;
   }
-  return order.map((hex) => ({ hex, mass: mass.get(hex)! }));
-}
-
-function formatMass(mass: number) {
-  if (mass >= 10) return mass.toFixed(1);
-  if (mass >= 1) return mass.toFixed(2);
-  return mass.toFixed(3);
+  const heart = body.organs.find((organ) => organ.name === "heart")!;
+  const brain = body.organs.find((organ) => organ.name === "brain")!;
+  const liver = body.organs.find((organ) => organ.name === "liver")!;
+  for (const organ of body.organs) {
+    const tone = organTone(organ, time);
+    const mark = organMarks[organ.name];
+    mark.style.fill = tone.fill;
+    mark.style.opacity = String(tone.opacity);
+    mark.style.filter = tone.glow;
+    traces[organ.name].className = organClass(organ);
+    waves[organ.name].setAttribute("points", tracePolyline(traceSamples(organ.name, organ.deflection, organ.integrity, time)));
+    hurts[organ.name].style.width = `${Math.max(0, Math.min(1, organ.integrity)) * 100}%`;
+  }
+  const vitals = vitalReadout(true, heart.deflection, brain.deflection, rate, liver.deflection);
+  vitalPulse.textContent = vitals.pulse;
+  vitalBreath.textContent = vitals.breath;
+  vitalTemp.textContent = vitals.temp;
+  vitalClear.textContent = vitals.clear;
+  const symptomHtml = symptomCard(symptomsFrom(body.organs));
+  if (symptoms.dataset.card !== symptomHtml) {
+    symptoms.dataset.card = symptomHtml;
+    symptoms.innerHTML = symptomHtml;
+  }
+  const bloodHtml = bloodCard(blood);
+  if (bloodReadout.dataset.card !== bloodHtml) {
+    bloodReadout.dataset.card = bloodHtml;
+    bloodReadout.innerHTML = bloodHtml;
+  }
+  if (affectReadout.textContent !== (affect.line ?? "")) affectReadout.textContent = affect.line ?? "";
+  const notes = abilityNotes(pilotOpen(blood));
+  const key = notes.join("|");
+  if (abilities.dataset.notes !== key) {
+    abilities.dataset.notes = key;
+    abilities.replaceChildren(
+      ...notes.map((text) => {
+        const note = document.createElement("div");
+        note.className = "ability";
+        note.textContent = text;
+        return note;
+      }),
+    );
+  }
 }
 
 function formatVolume(cubicMetres: number) {
