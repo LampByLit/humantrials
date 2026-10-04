@@ -522,6 +522,13 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   glow.position.set(cx, top + 0.02, cz);
   scene.add(glow);
 
+  const pit = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.043, 0.043, 0.04, 32),
+    new THREE.MeshBasicMaterial({ color: 0x000000 }),
+  );
+  pit.position.set(cx, top - 0.012, cz);
+  scene.add(pit);
+
   const vessel = addVessel(
     scene,
     world,
@@ -532,13 +539,7 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   );
   beakers.push(vessel);
   intake = vessel;
-  const well = new THREE.Mesh(
-    new THREE.CircleGeometry(0.04, 28),
-    new THREE.MeshBasicMaterial({ color: 0x000000 }),
-  );
-  well.rotation.x = -Math.PI / 2;
-  well.position.y = -0.034;
-  vessel.mesh.add(well);
+  vessel.mesh.visible = false;
 
   const height = top - 0.12;
   const midY = height / 2;
