@@ -77,15 +77,15 @@ describe("nutrition", () => {
   });
 
   it("weakens, slows and blurs a malnourished body", () => {
-    const fed = senseOf([], [], true, strainOf({ energy: 0.8, protein: 0.8, vitamins: 0.8 }));
-    const starved = senseOf([], [], true, strainOf({ energy: 0, protein: 0, vitamins: 0 }));
+    const fed = senseOf([], [], true, strainOf({ energy: 0.8, protein: 0.8, vitamins: 0.8, starve: 0 }));
+    const starved = senseOf([], [], true, strainOf({ energy: 0, protein: 0, vitamins: 0, starve: 0 }));
     expect(fed.move).toBe(1);
     expect(starved.move).toBeLessThan(0.4);
     expect(starved.move).toBeGreaterThan(0);
     expect(starved.operate).toBeLessThan(fed.operate);
     expect(starved.operate).toBeGreaterThan(0.12);
     expect(starved.blur).toBeGreaterThan(0.3);
-    const texts = needSymptoms({ energy: 0, protein: 0, vitamins: 0 }).map((symptom) => symptom.band);
+    const texts = needSymptoms({ energy: 0, protein: 0, vitamins: 0, starve: 0 }).map((symptom) => symptom.band);
     expect(texts).toEqual(["severe", "severe", "severe"]);
   });
 
