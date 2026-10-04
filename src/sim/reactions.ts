@@ -207,7 +207,12 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   addSkin(PALE, down(heart) * 1.1);
   addSkin(JAUNDICE, down(liver) * 1.3);
 
+  let mph = 0;
   for (const dose of doses) {
+    if (dose.hex.toUpperCase() === "#C93F38") {
+      mph += dose.mass;
+      continue;
+    }
     const profile = profileOf(dose.hex);
     if (!profile || dose.mass <= 0) continue;
     const mass = dose.mass;
@@ -226,13 +231,14 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   const sat = (value: number) => 1 - Math.exp(-Math.max(0, value));
   const tint = tw > 0 ? ([tr / tw, tg / tw, tb / tw] as const) : BLACK;
   const skin = sw > 0 ? ([sr / sw, sg / sw, sb / sw] as const) : BLACK;
+  const red = 1 - Math.exp(-mph * 40);
   return {
     shake: sat(shake),
     spasm: sat(spasm),
     pound: sat(pound),
     rate: Math.max(0.35, 1.15 + heart * 1.7),
-    tint,
-    wash: sat(tw),
+    tint: red > 0 ? ([0.82, 0.02, 0.02] as const) : tint,
+    wash: Math.max(sat(tw), red),
     skin,
     flush: sat(sw),
     vignette: sat(down(heart) * 1.3 + down(brain) * 0.65),

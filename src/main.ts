@@ -4,17 +4,18 @@ import { bindInput, input } from "./input";
 import { applyFeel, createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } from "./player";
 import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { createHands, driveLeftHand, followLeftHand, settleHand, tintSkin, updateHands } from "./hands";
+import { createHands, driveLeftHand, followLeftHand, settleHand, tintSkin, updateHands, type Hands } from "./hands";
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
-import { createLab, syncBeakers } from "./lab";
+import { createLab, readIntake, syncBeakers, type Beaker } from "./lab";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
-import { conditionOf, createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
-import { chemLabel } from "./sim/colorName";
+import { conditionOf, createBlood, createBody, pilotOpen, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
+import { chemLabel, isCatalog } from "./sim/colorName";
 import { senseOf, type Sense } from "./sim/reactions";
 import { createTitle } from "./title";
+import { applyTheme, dark } from "./theme";
 
 const loading = document.getElementById("loading")!;
 loading.textContent = "Loading physics";
@@ -25,8 +26,10 @@ const canvas = document.createElement("canvas");
 document.body.prepend(canvas);
 const prompt = document.getElementById("prompt")!;
 const pourReadout = document.getElementById("pour")!;
+const eyeReadout = document.getElementById("eyed")!;
 const healthReadout = document.getElementById("health")!;
-const veil = document.getElementById("veil")!;
+const restart = document.getElementById("restart") as HTMLButtonElement;
+restart.addEventListener("click", () => location.reload());
 bindInput(canvas, prompt);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -37,8 +40,8 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.localClippingEnabled = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xb7d4ea);
-scene.fog = new THREE.Fog(0xe7eef2, 16, 32);
+scene.background = new THREE.Color(0xf7f7f5);
+scene.fog = new THREE.Fog(0xf3f3f1, 20, 46);
 
 const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 40);
 
@@ -48,6 +51,7 @@ world.integrationParameters.numSolverIterations = 16;
 // The hand light in handShadow.ts supplies the rest of the light on upward surfaces,
 // and is the only light the hand blocks, so its shadow stays readable.
 scene.add(new THREE.HemisphereLight(0xfff8f0, 0xd9c4a4, 1));
+const hemi = scene.children.at(-1) as THREE.HemisphereLight;
 const sun = new THREE.DirectionalLight(0xfff6ea, 0.85);
 sun.position.set(1.5, 7, 1.5);
 sun.castShadow = true;
@@ -59,6 +63,7 @@ sun.shadow.camera.right = 10;
 sun.shadow.camera.top = 10;
 sun.shadow.camera.bottom = -10;
 scene.add(sun);
+applyTheme(false, { scene, hemi, sun });
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -68,7 +73,7 @@ const player = createPlayer(scene, world, camera);
 const beakers = createLab(scene, world);
 const [hands, , title] = await Promise.all([
   createHands(world),
-  dressLab(scene, world),
+  dressLab(scene, world, beakers),
   createTitle(renderer),
 ]);
 const reach = createReach(hands, player);
@@ -108,12 +113,18 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   document.body.classList.toggle("playing", input.playing);
+  document.body.classList.toggle("dead", input.dead);
 
   if (!input.playing) {
     title.update(now / 1000);
     renderer.render(title.scene, title.camera);
     requestAnimationFrame(frame);
     return;
+  }
+
+  if (input.themeToggle) {
+    input.themeToggle = false;
+    applyTheme(!dark, { scene, hemi, sun });
   }
 
   world.integrationParameters.dt = dt;
@@ -125,9 +136,11 @@ function frame(now: number) {
     input.pourX = 0;
     input.pourY = 0;
     if (!body.alive) {
+      input.dead = true;
       input.keys.clear();
       input.lookX = 0;
       input.lookY = 0;
+      if (document.pointerLockElement) document.exitPointerLock();
     }
   }
   updatePlayer(player, world, dt, grounded, verticalVelocity, sense);
@@ -144,6 +157,8 @@ function frame(now: number) {
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
   const drinker = body.alive && player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);
+  readIntake();
+  showEyes(eyeReadout, camera, hands, beakers, blood);
   if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
   const symptoms = stepBody(body, blood, dt);
   const felt = senseOf(body.organs, blood.doses, body.alive);
@@ -170,6 +185,50 @@ function frame(now: number) {
 }
 
 requestAnimationFrame(frame);
+
+const eyePoint = new THREE.Vector3();
+
+function showEyes(root: HTMLElement, camera: THREE.PerspectiveCamera, hands: Hands, beakers: Beaker[], blood: Blood) {
+  const found = nearestStock(hands, beakers);
+  if (!found) {
+    root.classList.remove("show");
+    return;
+  }
+  const sample = toChem(found.solution);
+  const known = sample.mass > 1e-8 && (isCatalog(sample.hex) || pilotOpen(blood));
+  if (!known) {
+    root.classList.remove("show");
+    return;
+  }
+  const at = found.body.translation();
+  eyePoint.set(at.x, at.y + found.height / 2 + 0.03, at.z).project(camera);
+  root.textContent = chemLabel(sample.hex);
+  root.style.left = `${(eyePoint.x * 0.5 + 0.5) * window.innerWidth}px`;
+  root.style.top = `${(-eyePoint.y * 0.5 + 0.5) * window.innerHeight}px`;
+  root.classList.toggle("show", eyePoint.z < 1);
+}
+
+function nearestStock(hands: Hands, beakers: Beaker[]): Beaker | null {
+  let best = 0.045;
+  let found: Beaker | null = null;
+  const consider = (bone: THREE.Object3D) => {
+    bone.getWorldPosition(eyePoint);
+    for (const beaker of beakers) {
+      if (beaker.fixed || beaker.solution.volume <= 1e-7) continue;
+      const at = beaker.body.translation();
+      const radial = Math.hypot(eyePoint.x - at.x, eyePoint.z - at.z) - beaker.radius;
+      const vertical = Math.abs(eyePoint.y - at.y) - beaker.height / 2;
+      const gap = Math.max(radial, vertical);
+      if (gap < best) {
+        best = gap;
+        found = beaker;
+      }
+    }
+  };
+  consider(hands.arm.fingertip);
+  if (hands.left.solid) consider(hands.left.fingertip);
+  return found;
+}
 
 function renderVeil(root: HTMLElement, canvas: HTMLCanvasElement, sense: Sense, time: number) {
   const beat = sense.pound > 0 ? 0.5 + 0.5 * Math.sin(time * sense.rate * Math.PI * 2) : 0;

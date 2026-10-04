@@ -302,7 +302,7 @@ function betweenHands(hands: Hands, hold: Hold, beakers: Beaker[]) {
   let beaker: Beaker | null = null;
   let best = Infinity;
   for (const candidate of beakers) {
-    if (candidate.radius <= BEAKER_RADIUS) continue;
+    if (candidate.radius <= BEAKER_RADIUS || candidate.fixed) continue;
     if (hold.grips.some((grip) => grip.beaker === candidate)) continue;
     const gapR = handGap(hands.arm, candidate, sideR);
     if (gapR > PAIR_TOUCH) continue;
@@ -346,6 +346,7 @@ function pinch(arm: Arm, hold: Hold, beakers: Beaker[]) {
   let beaker: Beaker | null = null;
   let best = TOUCH;
   for (const candidate of beakers) {
+    if (candidate.fixed) continue;
     if (hold.grips.some((grip) => grip.beaker === candidate)) continue;
     const gap = cylinderGap(point, candidate);
     if (gap < best) {

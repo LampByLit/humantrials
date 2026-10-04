@@ -8,12 +8,15 @@ export const input = {
   space: false,
   toggle: false,
   pairToggle: false,
+  themeToggle: false,
   gripLocked: false,
   squeeze: false,
   locked: false,
   playing: false,
   ready: false,
+  dead: false,
   slow: (): boolean => input.keys.has("ShiftLeft") || input.keys.has("ShiftRight"),
+  run: (): boolean => input.keys.has("ControlLeft") || input.keys.has("ControlRight"),
 };
 
 export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
@@ -26,6 +29,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       input.squeeze = false;
       input.gripLocked = false;
       input.pairToggle = false;
+      input.themeToggle = false;
     }
   };
 
@@ -49,7 +53,9 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   document.addEventListener("keydown", (event) => {
     if (event.code === "Space") event.preventDefault();
     if (!input.playing) return;
+    if (event.ctrlKey || event.code === "ControlLeft" || event.code === "ControlRight") event.preventDefault();
     if (event.code === "KeyF" && !event.repeat) input.pairToggle = true;
+    if (event.code === "KeyQ" && !event.repeat) input.themeToggle = true;
     input.keys.add(event.code);
     if (event.code === "Space") input.space = true;
   });
@@ -84,7 +90,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   const onPress = (event: MouseEvent) => {
     if (event.button !== 0 && event.button !== 2) return;
     if (!input.playing) {
-      if (!input.ready) return;
+      if (!input.ready || input.dead) return;
       input.playing = true;
       prompt.classList.add("hidden");
       canvas.requestPointerLock();

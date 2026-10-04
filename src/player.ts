@@ -5,6 +5,7 @@ import type { Sense } from "./sim/reactions";
 
 const EYE_HEIGHT = 1.58;
 const MOVE_SPEED = 2.3;
+const RUN_MOVE = 2;
 const SLOW_MOVE = 0.08;
 const LOOK_SENS = 0.0022;
 const PITCH_MIN = -1.15;
@@ -61,7 +62,7 @@ export function createPlayer(
   controller.setApplyImpulsesToDynamicBodies(true);
   controller.enableAutostep(0.25, 0.15, true);
 
-  object.position.set(0, 0, 1.05);
+  object.position.set(0, 0, 0.2);
   pivot.rotation.x = -0.28;
 
   return {
@@ -140,7 +141,8 @@ export function updatePlayer(
 
   const sin = Math.sin(player.yaw);
   const cos = Math.cos(player.yaw);
-  const speed = MOVE_SPEED * (input.slow() ? SLOW_MOVE : 1) * sense.move;
+  const pace = input.slow() ? SLOW_MOVE : input.run() ? RUN_MOVE : 1;
+  const speed = MOVE_SPEED * pace * sense.move;
   const weave = Math.sin(player.clock * 1.8) * sense.sway * speed * 0.55;
   const moveX = (strafe * cos - forward * sin) * speed * dt + weave * dt;
   const moveZ = (-strafe * sin - forward * cos) * speed * dt;

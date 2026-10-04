@@ -1,5 +1,6 @@
 import { colornames } from "color-name-list/bestof";
 import catalog from "../../concept/chems.json";
+import { derive } from "./compound";
 
 // The stocked hexchems are the best-of names from https://github.com/meodai/color-names.
 // A mix that is not an exact entry still takes the nearest name.
@@ -25,6 +26,7 @@ const named: Named[] = colornames.map((entry) => {
 
 const byHex = new Map(named.map((entry) => [entry.hex, entry]));
 const drugName = new Map(catalog.map((entry) => [entry.hex.toUpperCase(), entry.name]));
+const drugLatin = new Map(catalog.map((entry) => [entry.hex.toUpperCase(), entry.latin]));
 
 function nearest(hex: string): Named {
   const exact = byHex.get(hex);
@@ -57,8 +59,32 @@ export function chemLabel(hex: string): string {
   return drugName.get(key) ?? colorName(key);
 }
 
+export function isCatalog(hex: string): boolean {
+  return drugName.has(hex.toUpperCase());
+}
+
+/** Latin catalog name, otherwise the nearest color name. */
+export function nomenclature(hex: string): string {
+  const key = hex.toUpperCase();
+  return drugLatin.get(key) ?? colorName(key);
+}
+
 /** Snap a shelf color onto an exact named hexchem. */
 export function namedColor(hex: number): number {
   const text = `#${(hex & 0xffffff).toString(16).padStart(6, "0")}`.toUpperCase();
   return parseInt(nearest(text).hex.slice(1), 16);
+}
+
+const STEMS = ["ruber", "aurantius", "flavus", "chlorus", "viridis", "prasinus", "cyaneus", "caeruleus", "indicus", "violaceus", "purpureus", "roseus"];
+
+// concept/chems-health.md 2.5. Light, then chroma, then a 30° hue stem.
+export function latinName(hex: string): string {
+  const compound = derive(hex);
+  const max = Math.max(compound.r, compound.g, compound.b);
+  const light =
+    max < 0.15 ? "negra" : max < 0.35 ? "fuscus" : max < 0.55 ? "satur" : max < 0.75 ? "clarus" : max < 0.9 ? "pallidus" : "albus";
+  if (compound.purity < 0.12) return `${light} vanus`;
+  const chroma = compound.purity < 0.55 ? "spurius" : "merus";
+  const stem = STEMS[Math.floor((compound.hue + 15) / 30) % 12];
+  return `${light} ${chroma} ${stem}`;
 }

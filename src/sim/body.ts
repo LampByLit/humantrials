@@ -117,13 +117,23 @@ export type PendingDose = {
 export type Blood = {
   pending: PendingDose[];
   doses: Dose[];
+  // Volume of 100 Mph swallowed, in cubic metres. 10mL opens pilot eyes for every hex.
+  mph: number;
 };
 
+export const MPH_HEX = "#C93F38";
+export const MPH_VOLUME = 1e-5;
+
 export function createBlood(): Blood {
-  return { pending: [], doses: [] };
+  return { pending: [], doses: [], mph: 0 };
 }
 
-export function swallow(blood: Blood, dose: { hex: string; mass: number }) {
+export function pilotOpen(blood: Blood) {
+  return blood.mph >= MPH_VOLUME;
+}
+
+export function swallow(blood: Blood, dose: { hex: string; mass: number; volume?: number }) {
+  if (dose.hex.toUpperCase() === MPH_HEX && dose.volume) blood.mph += dose.volume;
   const mass = dose.mass * config.routes.oral.bioavailability;
   if (mass <= 1e-8) return;
   blood.pending.push({ hex: dose.hex, mass, left: config.routes.oral.onset });
@@ -171,7 +181,7 @@ export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
 
 function noiseBurden(doses: readonly Dose[]) {
   let total = 0;
-  for (const dose of doses) total += noise(derive(dose.hex), dose.mass);
+  for (const dose of doses) if (dose.hex.toUpperCase() !== MPH_HEX) total += noise(derive(dose.hex), dose.mass);
   return total;
 }
 
@@ -208,6 +218,7 @@ export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { or
   const next = organs.map((organ) => {
     let totalDrive = organ.side;
     for (const dose of doses) {
+      if (dose.hex.toUpperCase() === MPH_HEX) continue;
       const known = catalogDrive(dose.hex, organ.name);
       totalDrive += known === null ? drive(derive(dose.hex), organ, dose.mass) : known * dose.mass;
     }

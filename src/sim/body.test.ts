@@ -9,6 +9,7 @@ import {
   createBlood,
   createBody,
   evaluate,
+  pilotOpen,
   sensitivity,
   stepBody,
   swallow,
@@ -140,6 +141,12 @@ describe("body", () => {
     stepBody(body, blood, 1);
     expect(blood.doses[0].mass).toBeLessThan(entered);
     expect(blood.doses[0].mass).toBeGreaterThan(entered * Math.exp(-1));
+
+    const opened = createBlood();
+    swallow(opened, { hex: "#C93F38", mass: 0.05, volume: 9e-6 });
+    expect(pilotOpen(opened)).toBe(false);
+    swallow(opened, { hex: "#C93F38", mass: 0.05, volume: 2e-6 });
+    expect(pilotOpen(opened)).toBe(true);
 
     const wrecked = living([organ("heart", 0), organ("brain", 120), organ("liver", 240, -1, 0)]);
     const held = createBlood();

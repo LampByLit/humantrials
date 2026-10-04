@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chemLabel, colorName, namedColor } from "./colorName";
+import { chemLabel, colorName, latinName, namedColor } from "./colorName";
 
 describe("color names", () => {
   it("uses the catalog name for a known drug", () => {
@@ -11,7 +11,9 @@ describe("color names", () => {
     const snapped = namedColor(0xff0000);
     const hex = `#${snapped.toString(16).padStart(6, "0")}`.toUpperCase();
     expect(colorName(hex)).toBe(chemLabel(hex));
-    expect(colorName("#FF0000").length).toBeGreaterThan(0);
+    expect(latinName("#FFFFFF")).toBe("albus vanus");
+    expect(latinName("#000000")).toBe("negra vanus");
+    expect(latinName("#FF0000")).toBe("albus merus ruber");
     expect(namedColor(snapped)).toBe(snapped);
   });
 });

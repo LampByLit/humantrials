@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { BENCH_SURFACE, ROOM_X, ROOM_Z } from "./lab";
+import { BENCH_SURFACE, mountAnalyzer, ROOM_HEIGHT, ROOM_X, ROOM_Z, type Beaker } from "./lab";
+import { whiteSurface } from "./theme";
+import cabinetUrl from "../retro_industrial_control_cabinet.glb?url";
 
 // School Classrooms Asset Pack by styloo, CC0.
 // https://styloo.itch.io/classroom-asset-pack
@@ -90,7 +92,7 @@ function addModule(scene: THREE.Scene, source: THREE.Object3D, x: number, z: num
   scene.add(piece);
 }
 
-export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
+export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers: Beaker[]) {
   const loader = new GLTFLoader();
   const load = async (name: string) => {
     const gltf = await loader.loadAsync(`/models/lab/${name}.glb`);
@@ -98,7 +100,7 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     return gltf.scene;
   };
 
-  const [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials] =
+  const [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials, cabinet] =
     await Promise.all([
       load("floor"),
       load("wall"),
@@ -111,7 +113,19 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
       load("microscope"),
       load("centrifuge"),
       load("vials"),
+      loader.loadAsync(cabinetUrl).then((gltf) => {
+        prepare(gltf.scene);
+        return gltf.scene;
+      }),
     ]);
+
+  const paint = whiteSurface(0.92);
+  for (const model of [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials]) {
+    model.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = paint;
+    });
+  }
 
   const slots = (half: number) => {
     const out: number[] = [];
@@ -141,7 +155,7 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     addModule(scene, windowWall, -WALL_X, z, Math.PI / 2);
   }
 
-  const plaster = new THREE.MeshStandardMaterial({ color: 0xe6e4df, roughness: 0.92 });
+  const plaster = whiteSurface(0.94);
   const band = (width: number, height: number, depth: number, x: number, y: number, z: number) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), plaster);
     mesh.position.set(x, y, z);
@@ -149,13 +163,14 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
     mesh.receiveShadow = true;
     scene.add(mesh);
   };
-  const upperCenter = UPPER_BOTTOM + 0.5;
+  const upperHeight = ROOM_HEIGHT - UPPER_BOTTOM;
+  const upperCenter = UPPER_BOTTOM + upperHeight / 2;
   const spanX = ROOM_X * 2 + 0.05;
   const spanZ = ROOM_Z * 2 + 0.05;
-  band(spanX, 1.02, 0.08, 0, upperCenter, -WALL_Z);
-  band(spanX, 1.02, 0.08, 0, upperCenter, WALL_Z);
-  band(0.08, 1.02, spanZ, -WALL_X, upperCenter, 0);
-  band(0.08, 1.02, spanZ, WALL_X, upperCenter, 0);
+  band(spanX, upperHeight, 0.08, 0, upperCenter, -WALL_Z);
+  band(spanX, upperHeight, 0.08, 0, upperCenter, WALL_Z);
+  band(0.08, upperHeight, spanZ, -WALL_X, upperCenter, 0);
+  band(0.08, upperHeight, spanZ, WALL_X, upperCenter, 0);
 
   // Short bookcases in the north corners, under the plain wall panels so they don't cover the windows.
   for (const x of [-lastX - 0.15, lastX + 0.15]) {
@@ -195,12 +210,8 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World) {
   const onBench = (source: THREE.Object3D, x: number, z: number) => {
     scene.add(place(source, x, z - 0.22, 0, BENCH_SURFACE));
   };
-  onBench(microscope, 0, -0.2);
-  onBench(vials, -1.8, -0.2);
-  onBench(centrifuge, 1.8, -0.2);
-  onBench(vials, -3.6, -0.2);
-  onBench(microscope, 3.6, -0.2);
-  onBench(centrifuge, -3.6, -4.4);
-  onBench(microscope, -1.8, -4.4);
-  onBench(vials, 0, -4.4);
+  onBench(microscope, 0, -1.8);
+  onBench(vials, -2.5, -1.8);
+  onBench(centrifuge, 2.5, -1.8);
+  mountAnalyzer(scene, world, cabinet, beakers);
 }
