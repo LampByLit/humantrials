@@ -48,12 +48,49 @@ A dose is the mass administered, taken from the volume drawn.
 
 ### 2.3 Lab operations
 
-- **Mix**: masses and volumes add. The new hex is the mass-weighted average of the channels. The result is a new compound, not the same as giving the ingredients as separate doses: with narrow tuning, red plus green mixed becomes a yellowish compound that acts on whatever organ is tuned near yellow, while the two given separately act on the red and green organs. Only the color-plane vector (`mass * x`, `mass * y`) adds. Opposite hues still cancel toward gray (an inert neutralized salt). Do not test for equivalence with co-dosing. [Proposed]
+- **Mix**: masses and volumes add. Compounds mix like dyes: a channel is the share of that light the compound lets through, so the new channel is the mass-weighted geometric mean, `c = exp((mA ln cA + mB ln cB) / (mA + mB))`, with each channel floored at 0.03 so a zero channel cannot wipe out a mix. Blue and yellow make green; mixtures come out darker and weaker than their ingredients. The result is a new compound, not the same as giving the ingredients as separate doses: with narrow tuning, red plus green mixed becomes a dark yellowish compound that acts on whatever organ is tuned near yellow, while the two given separately act on the red and green organs. A fully saturated compound and its complement cancel to a dark gray (an inert neutralized salt); less saturated pairs leave a weak remainder. Do not test for equivalence with co-dosing. [Decided]
 - **Refine**: subtract the gray floor and rescale so the max channel returns to its old value: `c' = (c - min) * max / (max - min)`. Mass is multiplied by purity, so yield equals purity. Total drive is conserved, but noise falls. Refining must cost yield, time, or reagents so that cheap and muddy stays a real option. Gray and white cannot be refined. [Proposed]
 - **React**: a catalyst or heat step rotates hue by a fixed step, so a synthesis route is a path around the wheel. The reagent table is **[Open]**.
 - **Dilute**: water is the diluting agent, `{ volume }` only. Volume drawn from the water is added to the solution. The hex and the solute mass are unchanged, so concentration falls. Water is not a hex and is not mixed.
 
-**[Open] Mixing rule.** Weighted averaging means a mixture is always weaker than its ingredients, so strong secondaries cannot be made by mixing alone. The alternative is additive: the hex digits are literal atom counts of R, G, and B, mixing adds them, and there is a cap. Decide before building the economy. Also open: ingredient supply, cost, and scarcity.
+**Appearance.** Water is clear. A solution shows its hex by Beer-Lambert: each channel's transmitted light is `c ^ (concentration / stock)`, so a stock shows its hex exactly, dilution fades it toward clear, and concentrating past stock darkens it. Cloudiness (light scattering) is a separate, mass-like quantity that only affects appearance: milk is the white compound `#FFFFFF` (which on its own lets all light through) carried in a fully cloudy liquid, so it is opaque white and lightens what it is mixed into.
+
+**[Open]** Ingredient supply, cost, and scarcity.
+
+### 2.5 Latin names [Decided]
+
+Every hex has a generated Latin color name. The name describes the color. It is not unique: many hexes share a name. Identity stays the hex.
+
+```js
+const lightWord = (max) => {
+  if (max < 0.15) return "negra";
+  if (max < 0.35) return "fuscus";
+  if (max < 0.55) return "satur";
+  if (max < 0.75) return "clarus";
+  if (max < 0.9) return "pallidus";
+  return "albus";
+};
+const stems = ["ruber","aurantius","flavus","chlorus","viridis","prasinus","cyaneus","caeruleus","indicus","violaceus","purpureus","roseus"];
+const latinName = (compound) => {
+  const light = lightWord(Math.max(compound.r, compound.g, compound.b));
+  if (compound.purity < 0.12) return `${light} vanus`;
+  const chroma = compound.purity < 0.55 ? "spurius" : "merus";
+  const stem = stems[Math.floor((compound.hue + 15) / 30) % 12];
+  return `${light} ${chroma} ${stem}`;
+};
+```
+
+- **Light** is the brightest channel: negra, fuscus, satur, clarus, pallidus, albus.
+- **Chroma** is purity: vanus when nearly gray (no hue stem), spurius when muddy, merus when clean.
+- **Stem** is a 30° hue bin, centered on red at 0°: ruber, aurantius, flavus, chlorus, viridis, prasinus, cyaneus, caeruleus, indicus, violaceus, purpureus, roseus.
+
+`#FFFFFF` is **albus vanus**. In the world that compound is milk, and cloudiness (section 2.3) makes it opaque white. `#000000` is **negra vanus**. `#FF0000` is **clarus merus ruber**.
+
+The name shown on a dose is not the Latin class. Stocked compounds are snapped to the best-of list from [color-names](https://github.com/meodai/color-names), and any other hex, including a mix, uses the nearest name on that list. An exact catalog hex keeps its common name (caffeine, milk) instead.
+
+### 2.6 Catalog [Decided]
+
+`concept/chems.json` lists 50 common substances and the hex each one is. A catalog hex is that substance. Drinking it drives the heart, brain, and liver by the substance's profile in `src/sim/reactions.ts`, not by hue, so caffeine still alerts and pounds even though the receptors have moved. Any other hex, including a mix, still uses receptor tuning (section 3). The profile also sets how the dose feels: shake, spasm, heartbeat, color wash, skin color, blur, and how much it slows the body. A dead body cannot walk, look, or use the hands.
 
 ## 3. Effect model: receptors as color filters
 
@@ -218,7 +255,8 @@ The thresholds are rules of thumb, not measured targets, so tune them after play
 
 ## 8. Invariants to unit-test
 
-- A compound and its complement mixed in equal mass give a gray hex with zero potency, and every organ drive is about 0.
+- A fully saturated compound and its complement mixed in equal mass give a gray hex with zero potency, and every organ drive is about 0.
+- Blue and yellow mix to green. Splitting a pour does not change the result. A trace of black or of a zero channel does not wipe out a mix.
 - `drive` flips sign when the compound is replaced by its complement.
 - Zero mass gives zero drive. Zero potency (gray, white, black) gives zero drive and zero noise.
 - Refining preserves total drive (potency times mass) and reduces noise. Refining a gray is rejected.
@@ -240,7 +278,6 @@ The thresholds are rules of thumb, not measured targets, so tune them after play
 
 ## 10. Open decisions
 
-- Mixing: averaging or additive atom counts.
 - Ingredient supply, cost, and scarcity of the R, G, and B elements.
 - Reagent table for the React operation.
 - Cost of rat testing.

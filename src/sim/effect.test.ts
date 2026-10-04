@@ -44,8 +44,8 @@ describe("drive and noise", () => {
     }
   });
 
-  it("gives about zero drive on every organ after a complement mix", () => {
-    const mixed = derive(mix(solution("#C04080", 1, 1), solution(complement("#C04080"), 1, 1)).hex);
+  it("gives about zero drive on every organ after mixing a saturated compound with its complement", () => {
+    const mixed = derive(mix(solution("#FF00FF", 1, 1), solution(complement("#FF00FF"), 1, 1)).hex);
     for (const theta of [0, 60, 90, 120, 150]) {
       expect(Math.abs(drive(mixed, organ(theta), 2))).toBeLessThan(1e-6);
     }

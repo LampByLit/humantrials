@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { solutionFromHex, water, type Solution } from "./fluid/solution";
+import { milk, solutionFromHex, STOCK_CONCENTRATION, water, type Solution } from "./fluid/solution";
+import { namedColor } from "./sim/colorName";
 
 const WORLD_GROUP = 0x0002;
 const PROP_GROUP = 0x0008;
@@ -40,7 +41,7 @@ const HANDLE_REACH = 0.07;
 // see tools/grip-lab.mjs. hands.ts sizes its grip from this radius.
 export const BEAKER_RADIUS = 0.034;
 
-type Size = { radius: number; height: number; density: number; tray?: boolean };
+type Size = { radius: number; height: number; density: number; tray?: boolean; flange?: boolean };
 const SMALL: Size = { radius: 0.026, height: 0.068, density: 280 };
 const MEDIUM: Size = { radius: BEAKER_RADIUS, height: 0.09, density: 280 };
 // 8cm across, still inside the hand's span.
@@ -49,14 +50,20 @@ const LARGE: Size = { radius: 0.04, height: 0.115, density: 280 };
 const TRAY: Size = { radius: 0.085, height: 0.03, density: 900, tray: true };
 // Pot-sized glass. Too wide for the fingers alone; the left hand comes in for these.
 // Light glass so a full one is still a carry, not a deadlift.
-const POT_S: Size = { radius: 0.065, height: 0.14, density: 150 };
-const POT_M: Size = { radius: 0.085, height: 0.18, density: 130 };
-const POT_L: Size = { radius: 0.105, height: 0.22, density: 120 };
-const POT_XL: Size = { radius: 0.125, height: 0.27, density: 110 };
+const POT_S: Size = { radius: 0.065, height: 0.14, density: 150, flange: true };
+const POT_M: Size = { radius: 0.085, height: 0.18, density: 130, flange: true };
+const POT_L: Size = { radius: 0.105, height: 0.22, density: 120, flange: true };
+const POT_XL: Size = { radius: 0.125, height: 0.27, density: 110, flange: true };
+// A flat lip round a pot's mouth. The hands lift from under it, so a full pot sits
+// on them instead of hanging on friction alone.
+const FLANGE_WIDTH = 0.014;
+const FLANGE_THICK = 0.008;
+const FLANGE_SEGMENTS = 20;
+// Room between pots for a hand to get round the side of one.
+const POT_GAP = 0.14;
 
-// Solute mass per cubic metre of stock solution: 10 per litre, so a 10mL draw is a dose
-// of 0.1 against the body's deflection scale of 1.
-const STOCK = 10000;
+// White lets every colour through, so a white stock is stocked as milk to be seen at all.
+const MILK = 0xffffff;
 
 // The three elements.
 const RED = 0xe23b2f;
@@ -260,19 +267,19 @@ const BENCHES: Bench[] = [
     back: backChems([0xd0a0a0, 0xa0d0a0, 0xa0a0d0, 0xd0d0a0, 0xa0d0d0, 0xd0a0d0]),
   },
   {
-    // Pots of stock: elements and the ends of the gray scale.
+    // Pots of stock, small to large: the ends of the gray scale, gold and magenta, then the elements.
     x: 2.5,
     z: -4.4,
     facing: 1,
     width: 3.4,
     items: [
-      { size: POT_L, hex: RED, fill: 0.65 },
-      { size: POT_M, hex: GREEN, fill: 0.65 },
-      { size: POT_L, hex: BLUE, fill: 0.65 },
       { size: POT_S, hex: 0x000000, fill: 0.7 },
-      { size: POT_M, hex: 0xffffff, fill: 0.65 },
-      { size: POT_S, hex: 0xffd700, fill: 0.7 },
+      { size: POT_S, hex: 0xffffff, fill: 0.7 },
+      { size: POT_M, hex: 0xffd700, fill: 0.65 },
       { size: POT_M, hex: 0xff00ff, fill: 0.65 },
+      { size: POT_L, hex: RED, fill: 0.65 },
+      { size: POT_L, hex: GREEN, fill: 0.65 },
+      { size: POT_L, hex: BLUE, fill: 0.65 },
     ],
   },
 
@@ -287,19 +294,19 @@ const BENCHES: Bench[] = [
     back: chems([0x000000, 0xffffff, 0x000000, 0xffffff, 0x000000, 0xffffff, 0x000000, 0xffffff, 0x000000, 0xffffff], [LARGE, MEDIUM], 0.72),
   },
   {
-    // Pots of water and empty pots, big enough to mix a batch in.
+    // Pots of water and empty pots, big enough to mix a batch in. Small to large, each water beside its empty twin.
     x: 2.2,
     z: 4.6,
     facing: -1,
     width: 3.4,
     items: [
-      { size: POT_XL, fill: 0.7 },
-      { size: POT_L, fill: 0 },
-      { size: POT_M, fill: 0.7 },
-      { size: POT_S, fill: 0 },
       { size: POT_S, fill: 0.7 },
+      { size: POT_S, fill: 0 },
+      { size: POT_M, fill: 0.7 },
       { size: POT_M, fill: 0 },
       { size: POT_L, fill: 0.7 },
+      { size: POT_L, fill: 0 },
+      { size: POT_XL, fill: 0.7 },
       { size: POT_XL, fill: 0 },
     ],
   },
@@ -342,17 +349,21 @@ export function createLab(scene: THREE.Scene, world: RAPIER.World): Beaker[] {
 
 function lineUp(scene: THREE.Scene, world: RAPIER.World, bench: Bench, items: Stock[], depth: number, out: Beaker[]) {
   const edge = bench.z + bench.facing * depth;
-  const gap = 0.06;
-  const span = items.reduce((sum, item) => sum + item.size.radius * 2, 0) + gap * (items.length - 1);
+  const gap = items.some((item) => item.size.flange) ? POT_GAP : 0.06;
+  const span = items.reduce((sum, item) => sum + outerRadius(item.size) * 2, 0) + gap * (items.length - 1);
   let cursor = bench.x - bench.facing * (span / 2);
   for (const item of items) {
-    const r = item.size.radius;
+    const r = outerRadius(item.size);
     cursor += bench.facing * r;
     // Anything wider than a beaker is pulled back so its front rim stays on the bench edge line.
     const z = edge - bench.facing * Math.max(0, r - 0.04);
     out.push(addVessel(scene, world, item, cursor, z, bench.facing));
     cursor += bench.facing * (r + gap);
   }
+}
+
+function outerRadius(size: Size) {
+  return size.radius + (size.flange ? FLANGE_WIDTH : 0);
 }
 
 function addBench(
@@ -423,7 +434,7 @@ const plastic = new THREE.MeshStandardMaterial({
 });
 
 function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: number, z: number, facing: 1 | -1): Beaker {
-  const { radius, height, density, tray } = stock.size;
+  const { radius, height, density, tray, flange } = stock.size;
   const material = tray ? plastic : glass;
   const mesh = new THREE.Group();
   const segments = radius > 0.05 ? 40 : 28;
@@ -464,6 +475,8 @@ function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: num
     body,
   );
 
+  if (flange) addFlange(world, body, mesh, material, radius, height, density, segments);
+
   mesh.position.set(x, centerY, z);
   const volume = Math.PI * radius * radius * height * stock.fill;
   return {
@@ -472,9 +485,59 @@ function addVessel(scene: THREE.Scene, world: RAPIER.World, stock: Stock, x: num
     collider,
     radius,
     height,
-    solution: stock.hex === undefined ? water(volume) : solutionFromHex(stock.hex, volume, STOCK),
+    solution:
+      stock.hex === undefined
+        ? water(volume)
+        : stock.hex === MILK
+          ? milk(volume)
+          : solutionFromHex(namedColor(stock.hex), volume, STOCK_CONCENTRATION),
     handles: tray ? addTrayHandle(world, body, mesh, material, radius, height, density, facing) : [],
   };
+}
+
+// A ring of thin blocks flush with the mouth. The hole stays open, so pouring is unchanged.
+function addFlange(
+  world: RAPIER.World,
+  body: RAPIER.RigidBody,
+  mesh: THREE.Group,
+  material: THREE.Material,
+  radius: number,
+  height: number,
+  density: number,
+  segments: number,
+) {
+  const outer = radius + FLANGE_WIDTH;
+  const top = height / 2;
+  for (const y of [top, top - FLANGE_THICK]) {
+    const face = new THREE.Mesh(new THREE.RingGeometry(radius, outer, segments), material);
+    face.rotation.x = -Math.PI / 2;
+    face.position.y = y;
+    face.renderOrder = 3;
+    mesh.add(face);
+  }
+  const edge = new THREE.Mesh(new THREE.CylinderGeometry(outer, outer, FLANGE_THICK, segments, 1, true), material);
+  edge.position.y = top - FLANGE_THICK / 2;
+  edge.renderOrder = 3;
+  mesh.add(edge);
+
+  const middle = radius + FLANGE_WIDTH / 2;
+  const tangent = outer * Math.tan(Math.PI / FLANGE_SEGMENTS);
+  const turn = new THREE.Quaternion();
+  for (let i = 0; i < FLANGE_SEGMENTS; i++) {
+    const angle = ((i + 0.5) / FLANGE_SEGMENTS) * Math.PI * 2;
+    turn.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle);
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(FLANGE_WIDTH / 2, FLANGE_THICK / 2, tangent)
+        .setTranslation(Math.cos(angle) * middle, top - FLANGE_THICK / 2, Math.sin(angle) * middle)
+        .setRotation({ x: turn.x, y: turn.y, z: turn.z, w: turn.w })
+        .setDensity(density)
+        .setFriction(1.4)
+        .setRestitution(0.04)
+        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
+        .setCollisionGroups(collisionGroups(PROP_GROUP, ALL_GROUPS)),
+      body,
+    );
+  }
 }
 
 function addTrayHandle(

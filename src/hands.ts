@@ -2,12 +2,14 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { input } from "./input";
+import type { Sense } from "./sim/reactions";
 import { BEAKER_RADIUS, type Beaker } from "./lab";
 
 const MODEL_URL = "/models/fps-arm-rig.glb";
 const MODEL_SCALE = 0.0046;
 const POUR_SENS = 0.007;
-const POUR_LIMIT = 1.15;
+// About 120 degrees, past horizontal, so a vessel can be emptied.
+const POUR_LIMIT = 2.1;
 const SLOW_POUR = 0.08;
 const HAND_LERP = 9;
 const SQUEEZE_LERP = 18;
@@ -45,6 +47,12 @@ const SPLAY_ANGLE = 0.34;
 const PALM_GAP = BEAKER_RADIUS * 2;
 // Mass of the soft left hand. Heavy enough that a full pot doesn't flick it away.
 const LEFT_MASS = 1.1;
+// Push of the left hand into a large vessel, in newtons. Friction here combines to the
+// hand's 2.2, so the push needed scales with the vessel's weight over that.
+const GRIP_FRICTION = 2.2;
+const GRIP_MARGIN = 2;
+const MIN_GRIP_FORCE = 12;
+const MAX_GRIP_FORCE = 80;
 
 const HAND_GROUP = 0x0004;
 const WORLD_GROUP = 0x0002;
@@ -115,7 +123,13 @@ export type Hands = {
   gripMass: number;
   // A large beaker is carried between the hands. The fingers are only visual then.
   carrying: boolean;
+  skin: THREE.MeshStandardMaterial[];
+  tremor: number;
+  clock: number;
 };
+
+const SKIN = new THREE.Color(0xd2a07a);
+const SKIN_TARGET = new THREE.Color();
 
 // Both arms live in one skinned mesh. The left triangles move to their own mesh so
 // that arm can fade in on its own. reach.ts parents and places the model.
@@ -142,6 +156,15 @@ export async function createHands(world: RAPIER.World): Promise<Hands> {
   });
 
   const leftMesh = splitLeftArm(model);
+  const skin: THREE.MeshStandardMaterial[] = [];
+  model.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      if (material instanceof THREE.MeshStandardMaterial) skin.push(material);
+    }
+  });
   const leftShoulder = findBone(model, "ShoulderL");
   model.updateMatrixWorld(true);
   const left = createArm(model, world, -1, WORLD_GROUP | PROP_GROUP, true);
@@ -160,6 +183,9 @@ export async function createHands(world: RAPIER.World): Promise<Hands> {
     pourPitch: 0,
     aiming: false,
     aimPoint: new THREE.Vector3(),
+    skin,
+    tremor: 0,
+    clock: 0,
     gripMass: 0,
     carrying: false,
   };
@@ -359,7 +385,15 @@ const invPlayer = new THREE.Quaternion();
 const desired = new THREE.Quaternion();
 const tiltEuler = new THREE.Euler(0, 0, 0, "XZY");
 
-export function updateHands(hands: Hands, beakers: Beaker[], dt: number) {
+export function tintSkin(hands: Hands, sense: Sense) {
+  hands.tremor = sense.spasm;
+  SKIN_TARGET.setRGB(sense.skin[0], sense.skin[1], sense.skin[2]);
+  for (const material of hands.skin) material.color.copy(SKIN).lerp(SKIN_TARGET, sense.flush);
+}
+
+export function updateHands(hands: Hands, beakers: Beaker[], dt: number, sense?: Sense) {
+  hands.clock += dt;
+  hands.tremor = sense?.spasm ?? 0;
   if (input.toggle) {
     input.gripLocked = !input.gripLocked;
     input.toggle = false;
@@ -406,6 +440,7 @@ export function updateHands(hands: Hands, beakers: Beaker[], dt: number) {
   // The fade is only the mesh. The hand is solid as soon as F brings it in,
   // so the grip is physics for the whole approach.
   setArmSolid(hands.left, hands.left.raised && hands.pair > 0.05);
+  if (sense) tintSkin(hands, sense);
   hands.model.updateMatrixWorld(true);
   applyWristPour(hands);
   hands.model.updateMatrixWorld(true);
@@ -425,22 +460,43 @@ let gripRadius = PALM_GAP * 0.5;
 // that grip, not to the far side of the body.
 function findSideGrip(hands: Hands, beakers: Beaker[]) {
   hands.arm.hand.getWorldPosition(tipA);
+  const parent = hands.model.parent;
+  if (parent) parent.getWorldQuaternion(handQuat);
   let found = false;
   let best = 0.3;
   for (const beaker of beakers) {
-    const handle = beaker.handles[0];
-    if (beaker.radius <= BEAKER_RADIUS || !handle) continue;
+    if (beaker.radius <= BEAKER_RADIUS) continue;
     const at = beaker.body.translation();
-    const rotation = beaker.body.rotation();
-    parentQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    tipB.copy(handle.center).applyQuaternion(parentQuat).add(shoulderAt.set(at.x, at.y, at.z));
-    const distance = tipA.distanceTo(tipB);
-    if (distance < best) {
-      best = distance;
-      found = true;
-      gripPoint.copy(tipB);
-      gripRadius = handle.radius * 1.08;
+    shoulderAt.set(at.x, at.y, at.z);
+    const handle = beaker.handles[0];
+    if (handle) {
+      const rotation = beaker.body.rotation();
+      parentQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+      tipB.copy(handle.center).applyQuaternion(parentQuat).add(shoulderAt);
+      const distance = tipA.distanceTo(tipB);
+      if (distance < best) {
+        best = distance;
+        found = true;
+        gripPoint.copy(tipB);
+        gripRadius = handle.radius * 1.08;
+      }
+      continue;
     }
+    if (!parent) continue;
+    // The left hand comes from the player's left and stops on the outside of the wall.
+    across.set(-1, 0, 0).applyQuaternion(handQuat);
+    across.y = 0;
+    if (across.lengthSq() < 1e-6) continue;
+    across.normalize();
+    const surface = tipA.distanceTo(shoulderAt) - beaker.radius;
+    if (surface > 0.22 || surface >= best) continue;
+    best = surface;
+    found = true;
+    gripPoint.copy(shoulderAt).addScaledVector(across, beaker.radius + 0.02);
+    const low = at.y - beaker.height / 2 + 0.03;
+    const high = at.y + beaker.height / 2 - 0.02;
+    gripPoint.y = Math.min(high, Math.max(low, tipA.y));
+    gripRadius = 0.05;
   }
   return found;
 }
@@ -510,6 +566,7 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   placeLeft(hands, aim, amount);
   hands.model.updateMatrixWorld(true);
   arm.hand.getWorldPosition(leftTarget);
+  clearOfVessel(beakers, leftTarget);
   arm.hand.getWorldQuaternion(handQuaternion);
   if (!arm.solid) {
     parkLeft(arm, leftTarget);
@@ -535,13 +592,20 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   const dist = across.length();
   const mass = Math.max(0.2, arm.body.mass());
   // Once the joint has the beaker, the hand just rests on the glass.
-  const gripForce = hands.carrying ? 0 : 12;
+  const gripForce = hands.carrying ? 0 : leftGripForce(hands.gripMass);
   const step = dist < 1e-4 || dt < 1e-4 ? 0 : Math.min(dist / dt, (gripForce * dt) / mass);
   if (dist > 1e-4) across.multiplyScalar(step / dist);
   else across.set(0, 0, 0);
   arm.body.setLinvel({ x: across.x, y: across.y, z: across.z }, true);
   arm.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   arm.body.wakeUp();
+}
+
+// Enough that friction at both palms holds the vessel's weight with margin to spare.
+// An empty pot still gets the light touch, so it isn't knocked off the bench.
+function leftGripForce(mass: number) {
+  const hold = (mass * 9.81 * GRIP_MARGIN) / (2 * GRIP_FRICTION);
+  return Math.min(MAX_GRIP_FORCE, Math.max(MIN_GRIP_FORCE, hold));
 }
 
 function parkLeft(arm: Arm, at: THREE.Vector3) {
@@ -581,6 +645,84 @@ function sampleMass(arm: Arm, beakers: Beaker[], at: THREE.Vector3, origin: THRE
   return mass;
 }
 
+// The pose target can sit in the cavity of a wide pot. Put it back on the outside
+// of the wall so the hand is not driven through the glass.
+function clearOfVessel(beakers: Beaker[], point: THREE.Vector3) {
+  for (const beaker of beakers) {
+    if (beaker.radius <= BEAKER_RADIUS) continue;
+    const at = beaker.body.translation();
+    const rotation = beaker.body.rotation();
+    vesselQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    vesselAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
+    vesselRel.set(point.x - at.x, point.y - at.y, point.z - at.z);
+    const axial = vesselRel.dot(vesselAxis);
+    vesselRel.addScaledVector(vesselAxis, -axial);
+    if (Math.abs(axial) > beaker.height / 2) continue;
+    const radial = vesselRel.length();
+    const limit = beaker.radius + 0.02;
+    if (radial >= limit) continue;
+    if (radial < 1e-4) vesselRel.set(1, 0, 0);
+    else vesselRel.multiplyScalar(limit / radial);
+    point.set(at.x, at.y, at.z).addScaledVector(vesselAxis, axial).add(vesselRel);
+  }
+}
+
+function ejectLeft(arm: Arm, beakers: Beaker[]) {
+  const at = arm.body.translation();
+  handPosition.set(at.x, at.y, at.z);
+  const rotation = arm.body.rotation();
+  handQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+  let push = 0;
+  vesselRel.set(0, 0, 0);
+  const sample = (x: number, y: number, z: number) => {
+    const out = outsidePush(beakers, handPosition.x + x, handPosition.y + y, handPosition.z + z);
+    if (out > push) {
+      push = out;
+      vesselAxis.copy(vesselRel);
+    }
+  };
+  sample(0, 0, 0);
+  palmShift.set(0, 0.045, 0).applyQuaternion(handQuaternion);
+  sample(palmShift.x, palmShift.y, palmShift.z);
+  for (const pad of arm.pads) {
+    const local = pad.collider.translation();
+    palmShift.set(local.x, local.y, local.z).applyQuaternion(handQuaternion);
+    sample(palmShift.x, palmShift.y, palmShift.z);
+  }
+  if (push < 1e-4) return;
+  handPosition.addScaledVector(vesselAxis, push);
+  arm.body.setTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z }, true);
+  arm.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+}
+
+// How far a point sits inside a large pot, and the horizontal direction back out.
+// `vesselRel` is overwritten with that direction. Returns 0 when the point is outside.
+function outsidePush(beakers: Beaker[], x: number, y: number, z: number) {
+  let push = 0;
+  for (const beaker of beakers) {
+    if (beaker.radius <= BEAKER_RADIUS) continue;
+    const at = beaker.body.translation();
+    const rotation = beaker.body.rotation();
+    vesselQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+    const axis = fingerAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
+    const relX = x - at.x;
+    const relY = y - at.y;
+    const relZ = z - at.z;
+    const axial = relX * axis.x + relY * axis.y + relZ * axis.z;
+    if (Math.abs(axial) > beaker.height / 2) continue;
+    const rx = relX - axis.x * axial;
+    const ry = relY - axis.y * axial;
+    const rz = relZ - axis.z * axial;
+    const radial = Math.hypot(rx, ry, rz);
+    const need = beaker.radius + 0.012 - radial;
+    if (need <= push) continue;
+    push = need;
+    if (radial < 1e-4) vesselRel.set(1, 0, 0);
+    else vesselRel.set(rx / radial, ry / radial, rz / radial);
+  }
+  return push;
+}
+
 function vesselMass(beakers: Beaker[], sample: THREE.Vector3) {
   let mass = 0;
   for (const beaker of beakers) {
@@ -601,7 +743,7 @@ function vesselMass(beakers: Beaker[], sample: THREE.Vector3) {
 let leftBlocked = false;
 
 // After the step, the mesh goes where the soft hand actually stopped.
-export function followLeftHand(hands: Hands, world: RAPIER.World) {
+export function followLeftHand(hands: Hands, beakers: Beaker[], world: RAPIER.World) {
   const arm = hands.left;
   if (!arm.driven || !arm.solid) {
     leftBlocked = false;
@@ -614,6 +756,9 @@ export function followLeftHand(hands: Hands, world: RAPIER.World) {
       if (membership & (WORLD_GROUP | PROP_GROUP)) leftBlocked = true;
     });
   }
+  // The carried pot does not collide with the hands, so a bump can leave the
+  // left hand in the cavity. Put it back on the outside before the mesh follows.
+  ejectLeft(arm, beakers);
   const at = arm.body.translation();
   arm.hand.getWorldPosition(tipB);
   across.set(at.x - tipB.x, at.y - tipB.y, at.z - tipB.z);
@@ -707,7 +852,13 @@ function applyWristPour(hands: Hands) {
   parent.getWorldQuaternion(parentQuat);
   hand.getWorldQuaternion(handQuat);
   player.getWorldQuaternion(playerQuat);
-  tiltEuler.set(hands.pourPitch, 0, hands.pourRoll);
+  const twitch = hands.tremor * 0.9;
+  const time = hands.clock;
+  tiltEuler.set(
+    hands.pourPitch + Math.sin(time * 23) * twitch,
+    Math.sin(time * 17) * twitch * 0.35,
+    hands.pourRoll + Math.sin(time * 31) * twitch,
+  );
   pourQ.setFromEuler(tiltEuler);
   invPlayer.copy(playerQuat).invert();
   desired.copy(playerQuat).multiply(pourQ).multiply(invPlayer).multiply(handQuat);

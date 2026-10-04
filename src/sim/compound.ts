@@ -71,13 +71,26 @@ export function complement(hex: string): string {
   return fromChannels(pivot - compound.r, pivot - compound.g, pivot - compound.b);
 }
 
+// A channel is the share of that light a compound lets through, so mixing multiplies them
+// like dyes: blue and yellow make green. The floor stops a zero channel from wiping out
+// that channel in any mix it touches.
+export const CHANNEL_FLOOR = 0.03;
+
+/** Mass-weighted geometric mean of two channel values. */
+export function mixChannel(a: number, aMass: number, b: number, bMass: number): number {
+  if (aMass <= 0) return b;
+  if (bMass <= 0) return a;
+  const log = (channel: number) => Math.log(Math.max(CHANNEL_FLOOR, channel));
+  return Math.exp((log(a) * aMass + log(b) * bMass) / (aMass + bMass));
+}
+
 export function mix(a: Solution, b: Solution): Solution {
   const mass = a.mass + b.mass;
   const volume = a.volume + b.volume;
   if (mass <= 0) throw new Error("mix needs positive mass");
   const left = derive(a.hex);
   const right = derive(b.hex);
-  const channel = (from: number, to: number) => (from * a.mass + to * b.mass) / mass;
+  const channel = (from: number, to: number) => mixChannel(from, a.mass, to, b.mass);
   return {
     hex: fromChannels(channel(left.r, right.r), channel(left.g, right.g), channel(left.b, right.b)),
     mass,

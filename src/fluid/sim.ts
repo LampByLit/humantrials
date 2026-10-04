@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { Beaker } from "../lab";
-import { massIn, mixIn, water, type Solution } from "./solution";
+import { CHANNEL_FLOOR } from "../sim/compound";
+import { mixIn, portion, STOCK_CONCENTRATION, water, type Solution } from "./solution";
 import { lowestRim, pourFlow, solveSurface, type Vec3 } from "./volume";
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -12,27 +13,30 @@ const MAX_RINGS = 64;
 const RING_SEGMENTS = 7;
 const MOUTH_SCALE = 0.9;
 const RAY_GROUPS = ((0x0002 | 0x0008) << 16) | 0xffff;
-// Water shows as a pale tint; a solution shows its hex more fully the more concentrated it is.
+// Light through a dye falls off with concentration (Beer-Lambert): a stock shows its hex,
+// diluting fades it toward clear water, and cloud makes it opaque.
 const WATER_TINT = new THREE.Color().setRGB(0.82, 0.9, 0.95, THREE.SRGBColorSpace);
-const FULL_COLOR_CONCENTRATION = 4000;
+const WHITE = new THREE.Color(1, 1, 1);
+const WATER_ALPHA = 0.16;
+const DYE_ALPHA = 0.9;
+const CLOUD_DENSITY = 5;
+const MAX_ALPHA = 0.97;
+// Thin or clear liquid still needs to read as liquid.
+const STREAM_MIN_ALPHA = 0.35;
+const PUDDLE_MIN_ALPHA = 0.35;
 const PUDDLE_COUNT = 48;
 const PUDDLE_MERGE_GAP = 0.015;
 const PUDDLE_DEPTH = 0.0025;
 const PUDDLE_LIFT = 0.004;
 const AIM_RADIUS = 0.006;
 
-type Droplet = {
+type Droplet = Solution & {
   x: number;
   y: number;
   z: number;
   vx: number;
   vy: number;
   vz: number;
-  volume: number;
-  mass: number;
-  r: number;
-  g: number;
-  b: number;
   age: number;
   bounces: number;
   ignore: Beaker | null;
@@ -40,13 +44,8 @@ type Droplet = {
 
 type Pending = Droplet;
 
-type Puddle = {
+type Puddle = Solution & {
   mesh: THREE.Mesh;
-  volume: number;
-  mass: number;
-  r: number;
-  g: number;
-  b: number;
   // Set when the volume or centre changes, so merging and spilling run only then.
   dirty: boolean;
 };
@@ -69,6 +68,7 @@ type Vessel = {
   incoming: Solution;
   outV: number;
   outM: number;
+  outC: number;
 };
 
 export type Capsule = { x: number; y: number; z: number; half: number; radius: number };
@@ -178,12 +178,15 @@ export function updateFluid(
   const step = Math.min(dt, 0.05);
   sim.drinker = drinker;
   sim.drunk.mass = 0;
+  sim.drunk.cloud = 0;
   sim.drunk.volume = 0;
   for (const vessel of sim.vessels) {
     vessel.incoming.mass = 0;
+    vessel.incoming.cloud = 0;
     vessel.incoming.volume = 0;
     vessel.outV = 0;
     vessel.outM = 0;
+    vessel.outC = 0;
     vessel.pointCount = 0;
     slosh(vessel, step);
   }
@@ -223,14 +226,16 @@ function createVessel(
   const innerBottom = innerTop * 0.92;
   const liquidHalf = beaker.height / 2 - 0.004;
   const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  const bodyColor = new THREE.Color();
+  const bodyAlpha = shade(beaker.solution, bodyColor);
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: tint(beaker.solution, new THREE.Color()),
-    emissive: tint(beaker.solution, new THREE.Color()),
+    color: bodyColor,
+    emissive: bodyColor,
     emissiveIntensity: 0.14,
     roughness: 0.07,
     metalness: 0.02,
     transparent: true,
-    opacity: 0.9,
+    opacity: bodyAlpha,
     envMap,
     envMapIntensity: 0.9,
     clippingPlanes: [plane],
@@ -252,6 +257,7 @@ function createVessel(
   const capMat = new THREE.ShaderMaterial({
     uniforms: {
       color: { value: bodyMat.color.clone() },
+      opacity: { value: bodyAlpha },
       lightDir: { value: light },
       beakerInv: { value: new THREE.Matrix4() },
       radiusTop: { value: innerTop },
@@ -270,6 +276,7 @@ function createVessel(
     `,
     fragmentShader: `
       uniform vec3 color;
+      uniform float opacity;
       uniform vec3 lightDir;
       uniform mat4 beakerInv;
       uniform float radiusTop;
@@ -289,7 +296,8 @@ function createVessel(
         float fres = pow(1.0 - abs(ndotl), 2.0);
         float rim = smoothstep(0.55, 1.0, length(local.xz) / max(limit, 0.0001));
         vec3 col = color * light + color * fres * 0.22 + vec3(0.85) * rim * 0.16;
-        gl_FragColor = linearToOutputTexel(vec4(col, 0.94));
+        float alpha = clamp(opacity + rim * 0.25 + fres * 0.1, 0.0, 0.97);
+        gl_FragColor = linearToOutputTexel(vec4(col, alpha));
       }
     `,
     transparent: true,
@@ -350,17 +358,27 @@ function createVessel(
     streamRadius: 0.005,
     dripDebt: 0,
     mass: -1,
-    incoming: { r: 1, g: 1, b: 1, mass: 0, volume: 0 },
+    incoming: water(0),
     outV: 0,
     outM: 0,
+    outC: 0,
   };
 }
 
-function tint(solution: Solution, out: THREE.Color) {
-  const concentration = solution.volume > 1e-9 ? solution.mass / solution.volume : 0;
-  const strength = 1 - Math.exp(-concentration / FULL_COLOR_CONCENTRATION);
-  hexColor.setRGB(solution.r, solution.g, solution.b, THREE.SRGBColorSpace);
-  return out.copy(WATER_TINT).lerp(hexColor, strength);
+/** Writes the liquid's colour into `out` and returns its opacity. */
+function shade(liquid: Solution, out: THREE.Color): number {
+  const volume = liquid.volume;
+  const depth = volume > 1e-9 ? liquid.mass / volume / STOCK_CONCENTRATION : 0;
+  const through = (channel: number) => Math.pow(Math.max(CHANNEL_FLOOR, channel), depth);
+  const r = through(liquid.r);
+  const g = through(liquid.g);
+  const b = through(liquid.b);
+  const absorb = 1 - Math.min(r, g, b);
+  const cloud = volume > 1e-9 ? 1 - Math.exp((-CLOUD_DENSITY * liquid.cloud) / volume) : 0;
+  hexColor.setRGB(r, g, b, THREE.SRGBColorSpace);
+  out.copy(WATER_TINT).lerp(WHITE, Math.max(absorb, cloud)).multiply(hexColor);
+  const clear = (1 - WATER_ALPHA) * (1 - DYE_ALPHA * Math.pow(absorb, 0.7)) * (1 - cloud);
+  return Math.min(MAX_ALPHA, 1 - clear);
 }
 
 function createPuddle(scene: THREE.Scene, envMap: THREE.Texture | null): Puddle {
@@ -385,7 +403,7 @@ function createPuddle(scene: THREE.Scene, envMap: THREE.Texture | null): Puddle 
   mesh.renderOrder = 4;
   mesh.material.depthWrite = false;
   scene.add(mesh);
-  return { mesh, volume: 0, mass: 0, r: 1, g: 1, b: 1, dirty: false };
+  return { ...water(0), mesh, dirty: false };
 }
 
 function slosh(vessel: Vessel, dt: number) {
@@ -429,53 +447,41 @@ function pourVessel(sim: FluidSim, world: RAPIER.World, vessel: Vessel, dt: numb
     return;
   }
 
-  const { r, g, b } = beaker.solution;
   if (flow < DRIP_RATE) {
     vessel.dripDebt += flow * dt;
     if (vessel.dripDebt < DROP_VOLUME) return;
     const amount = Math.min(beaker.solution.volume, vessel.dripDebt);
     vessel.dripDebt = 0;
     if (amount <= 0) return;
-    const mass = massIn(beaker.solution, amount);
-    vessel.outV += amount;
-    vessel.outM += mass;
-    emitDroplet(sim, vessel, amount, mass, r, g, b, surface.overflow);
+    emitDroplet(sim, vessel, drawOut(vessel, amount), surface.overflow);
     return;
   }
 
   const amount = Math.min(beaker.solution.volume, flow * dt + vessel.dripDebt);
   vessel.dripDebt = 0;
   if (amount <= 0) return;
-  const mass = massIn(beaker.solution, amount);
-  vessel.outV += amount;
-  vessel.outM += mass;
   vessel.streamRadius = Math.min(0.013, Math.max(0.0045, Math.sqrt((amount / dt) / (Math.PI * 0.9))));
-  traceStream(sim, world, vessel, amount, mass, r, g, b, surface.overflow);
+  traceStream(sim, world, vessel, drawOut(vessel, amount), surface.overflow);
 }
 
-function emitDroplet(
-  sim: FluidSim,
-  vessel: Vessel,
-  amount: number,
-  mass: number,
-  r: number,
-  g: number,
-  b: number,
-  overflow: number,
-) {
+function drawOut(vessel: Vessel, amount: number): Solution {
+  const liquid = portion(vessel.beaker.solution, amount);
+  vessel.outV += liquid.volume;
+  vessel.outM += liquid.mass;
+  vessel.outC += liquid.cloud;
+  return liquid;
+}
+
+function emitDroplet(sim: FluidSim, vessel: Vessel, liquid: Solution, overflow: number) {
   const launch = lipLaunch(vessel, overflow);
   spawnDroplet(sim, {
+    ...liquid,
     x: launch.x,
     y: launch.y,
     z: launch.z,
     vx: launch.vx,
     vy: launch.vy,
     vz: launch.vz,
-    volume: amount,
-    mass,
-    r,
-    g,
-    b,
     age: 0,
     bounces: 0,
     ignore: vessel.beaker,
@@ -519,25 +525,21 @@ function traceStream(
   sim: FluidSim,
   world: RAPIER.World,
   vessel: Vessel,
-  amount: number,
-  mass: number,
-  r: number,
-  g: number,
-  b: number,
+  liquid: Solution,
   overflow: number,
 ) {
   const end = walkStream(sim, world, vessel, overflow, (x, y, z) => pushPoint(vessel, x, y, z));
   if (end.swallowed) {
-    mixIn(sim.drunk, r, g, b, mass, amount);
+    mixIn(sim.drunk, liquid);
     return;
   }
   if (end.hit) {
-    if (end.hit.beaker) receive(sim, end.hit.beaker, r, g, b, mass, amount);
-    else if (end.hit.prop) runOff(sim, world, end.hit.prop, end.hit, { volume: amount, mass, r, g, b }, true);
-    else settle(sim, world, end.hit, amount, mass, r, g, b, true);
+    if (end.hit.beaker) receive(sim, end.hit.beaker, liquid);
+    else if (end.hit.prop) runOff(sim, world, end.hit.prop, end.hit, liquid, true);
+    else settle(sim, world, end.hit, liquid, true);
     return;
   }
-  settleDown(sim, world, end.x, end.y, end.z, amount, mass, r, g, b, true);
+  settleDown(sim, world, end.x, end.y, end.z, liquid, true);
 }
 
 // The same arc the stream follows, without moving liquid. The pour marker uses it so the
@@ -763,7 +765,7 @@ function segmentHit(
       ny: cast.normal.y,
       nz: cast.normal.z,
       beaker: null,
-      prop: sim.vessels.find((vessel) => vessel.beaker.collider.handle === cast.collider.handle)?.beaker ?? null,
+      prop: sim.vessels.find((vessel) => vessel.beaker.body.handle === cast.collider.parent()?.handle)?.beaker ?? null,
     };
   }
   return hit;
@@ -809,20 +811,20 @@ function pointInMouth(beaker: Beaker, x: number, y: number, z: number) {
   return tmp3.y > half - 0.012 && tmp3.y < half + 0.028;
 }
 
-function receive(sim: FluidSim, beaker: Beaker, r: number, g: number, b: number, mass: number, volume: number) {
+function receive(sim: FluidSim, beaker: Beaker, liquid: Solution) {
   const vessel = sim.vessels.find((entry) => entry.beaker === beaker);
-  if (!vessel || volume <= 0) return;
-  mixIn(vessel.incoming, r, g, b, mass, volume);
+  if (!vessel || liquid.volume <= 0) return;
+  mixIn(vessel.incoming, liquid);
 }
 
 // Every spill ends on an upward surface: in a container whose mouth it falls into, or a
 // puddle. Nothing is left on a wall or dropped through the bench.
-function settle(sim: FluidSim, world: RAPIER.World, hit: Hit, volume: number, mass: number, r: number, g: number, b: number, incoming: boolean) {
+function settle(sim: FluidSim, world: RAPIER.World, hit: Hit, liquid: Solution, incoming: boolean) {
   if (hit.ny > 0.62) {
-    addPuddle(sim, hit.x, hit.y, hit.z, volume, mass, r, g, b);
+    addPuddle(sim, hit.x, hit.y, hit.z, liquid);
     return;
   }
-  settleDown(sim, world, hit.x + hit.nx * 0.02, hit.y + hit.ny * 0.02, hit.z + hit.nz * 0.02, volume, mass, r, g, b, incoming);
+  settleDown(sim, world, hit.x + hit.nx * 0.02, hit.y + hit.ny * 0.02, hit.z + hit.nz * 0.02, liquid, incoming);
 }
 
 function settleDown(
@@ -831,31 +833,27 @@ function settleDown(
   x: number,
   y: number,
   z: number,
-  volume: number,
-  mass: number,
-  r: number,
-  g: number,
-  b: number,
+  liquid: Solution,
   incoming: boolean,
   depth = 0,
 ) {
   const hit = segmentHit(sim, world, null, x, y, z, x, y - 4, z, undefined);
   if (hit?.beaker) {
-    if (incoming) receive(sim, hit.beaker, r, g, b, mass, volume);
-    else mixIn(hit.beaker.solution, r, g, b, mass, volume);
+    if (incoming) receive(sim, hit.beaker, liquid);
+    else mixIn(hit.beaker.solution, liquid);
     return;
   }
   // The outside of a container is not a resting place. Keep falling to the bench or floor.
   if (hit?.prop && depth < 6) {
-    settleDown(sim, world, x, hit.y - 0.03, z, volume, mass, r, g, b, incoming, depth + 1);
+    settleDown(sim, world, x, hit.y - 0.03, z, liquid, incoming, depth + 1);
     return;
   }
   if (hit && hit.ny > 0.62 && hit.y > 0.05) {
-    addPuddle(sim, hit.x, hit.y, hit.z, volume, mass, r, g, b);
+    addPuddle(sim, hit.x, hit.y, hit.z, liquid);
     return;
   }
   const spot = visibleFloor(sim, world, hit ? hit.x : x, hit ? hit.z : z);
-  addPuddle(sim, spot.x, 0.012, spot.z, volume, mass, r, g, b);
+  addPuddle(sim, spot.x, 0.012, spot.z, liquid);
 }
 
 // A floor puddle under a bench cannot be seen from above. Slide it out until the floor
@@ -909,7 +907,7 @@ function spawnDroplet(sim: FluidSim, drop: Droplet) {
         nearest = other;
       }
     }
-    mixIn(nearest, drop.r, drop.g, drop.b, drop.mass, drop.volume);
+    mixIn(nearest, drop);
     return;
   }
   sim.droplets.push(drop);
@@ -921,7 +919,7 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
     const drop = sim.droplets[i];
     drop.age += dt;
     if (insideDrinker(sim, drop.x, drop.y, drop.z)) {
-      mixIn(sim.drunk, drop.r, drop.g, drop.b, drop.mass, drop.volume);
+      mixIn(sim.drunk, drop);
       sim.droplets.splice(i, 1);
       continue;
     }
@@ -944,14 +942,14 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
     );
     const mouth = hit?.beaker ?? null;
     if (mouth) {
-      mixIn(mouth.solution, drop.r, drop.g, drop.b, drop.mass, drop.volume);
+      mixIn(mouth.solution, drop);
       sim.droplets.splice(i, 1);
       continue;
     }
     if (!hit) {
       const ground = segmentHit(sim, world, skipMouth, x1, y1 + 0.02, z1, x1, y1 - 0.3, z1, drop.ignore?.body);
       if (ground?.beaker) {
-        mixIn(ground.beaker.solution, drop.r, drop.g, drop.b, drop.mass, drop.volume);
+        mixIn(ground.beaker.solution, drop);
         sim.droplets.splice(i, 1);
         continue;
       }
@@ -961,7 +959,7 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
         continue;
       }
       if (ground && ground.ny > 0.62 && y1 - ground.y < 0.3) {
-        addPuddle(sim, ground.x, ground.y, ground.z, drop.volume, drop.mass, drop.r, drop.g, drop.b);
+        addPuddle(sim, ground.x, ground.y, ground.z, drop);
         sim.droplets.splice(i, 1);
         continue;
       }
@@ -971,7 +969,7 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
       drop.vy = vy1;
       if (drop.y < 0) {
         sim.droplets.splice(i, 1);
-        settleDown(sim, world, drop.x, 0.2, drop.z, drop.volume, drop.mass, drop.r, drop.g, drop.b, false);
+        settleDown(sim, world, drop.x, 0.2, drop.z, drop, false);
       }
       continue;
     }
@@ -981,28 +979,24 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
       continue;
     }
     sim.droplets.splice(i, 1);
-    settle(sim, world, hit, drop.volume, drop.mass, drop.r, drop.g, drop.b, false);
+    settle(sim, world, hit, drop, false);
   }
 }
 
-function addPuddle(
-  sim: FluidSim,
-  x: number,
-  y: number,
-  z: number,
-  volume: number,
-  mass: number,
-  r: number,
-  g: number,
-  b: number,
-) {
-  if (volume <= 0) return;
+function addPuddle(sim: FluidSim, x: number, y: number, z: number, liquid: Solution) {
+  if (liquid.volume <= 0) return;
   y += PUDDLE_LIFT;
   let puddle = sim.puddles.find((entry) => entry.volume > 0 && touches(entry, x, y, z, 0)) ?? freeSlot(sim);
   if (!puddle) puddle = nearestPuddle(sim, x, y, z);
   if (puddle.volume <= 0) puddle.mesh.position.set(x, y, z);
-  pool(puddle, x, z, volume);
-  mixIn(puddle, r, g, b, mass, volume);
+  pool(puddle, x, z, liquid.volume);
+  mixIn(puddle, liquid);
+}
+
+function drain(liquid: Solution) {
+  liquid.volume = 0;
+  liquid.mass = 0;
+  liquid.cloud = 0;
 }
 
 // A puddle's centre is the centre of its liquid, so what joins it pulls it that way.
@@ -1022,9 +1016,8 @@ function touches(puddle: Puddle, x: number, y: number, z: number, radius: number
 
 function merge(into: Puddle, from: Puddle) {
   pool(into, from.mesh.position.x, from.mesh.position.z, from.volume);
-  mixIn(into, from.r, from.g, from.b, from.mass, from.volume);
-  from.volume = 0;
-  from.mass = 0;
+  mixIn(into, from);
+  drain(from);
   from.dirty = false;
 }
 
@@ -1073,7 +1066,7 @@ function runOff(
   world: RAPIER.World,
   beaker: Beaker,
   hit: Hit,
-  liquid: { volume: number; mass: number; r: number; g: number; b: number },
+  liquid: Solution,
   incoming: boolean,
 ) {
   const p = beaker.body.translation();
@@ -1085,19 +1078,7 @@ function runOff(
   if (tmp.lengthSq() < 1e-8) tmp.set(1, 0, 0);
   tmp.normalize();
   const reach = beaker.radius + (beaker.height / 2) * Math.hypot(axisV.x, axisV.z) + 0.012;
-  settleDown(
-    sim,
-    world,
-    p.x + tmp.x * reach,
-    hit.y,
-    p.z + tmp.z * reach,
-    liquid.volume,
-    liquid.mass,
-    liquid.r,
-    liquid.g,
-    liquid.b,
-    incoming,
-  );
+  settleDown(sim, world, p.x + tmp.x * reach, hit.y, p.z + tmp.z * reach, liquid, incoming);
 }
 
 // Puddles that grow into each other become one, and a puddle wider than its surface
@@ -1148,11 +1129,12 @@ function spill(sim: FluidSim, world: RAPIER.World, puddle: Puddle) {
   const capacity = Math.PI * reach * reach * PUDDLE_DEPTH;
   const excess = puddle.volume - capacity;
   if (excess <= 1e-9) return;
-  const mass = puddle.mass * (excess / puddle.volume);
+  const overflow = portion(puddle, excess);
   puddle.volume = capacity;
-  puddle.mass -= mass;
+  puddle.mass -= overflow.mass;
+  puddle.cloud -= overflow.cloud;
   const out = reach + 0.02;
-  settleDown(sim, world, p.x + edgeX * out, p.y + 0.02, p.z + edgeZ * out, excess, mass, puddle.r, puddle.g, puddle.b, false);
+  settleDown(sim, world, p.x + edgeX * out, p.y + 0.02, p.z + edgeZ * out, overflow, false);
 }
 
 // Only the fixed benches and floor shape a puddle. A beaker standing in one does not.
@@ -1178,9 +1160,8 @@ function scoopPuddles(sim: FluidSim) {
     const p = puddle.mesh.position;
     for (const vessel of sim.vessels) {
       if (!pointInMouth(vessel.beaker, p.x, p.y, p.z)) continue;
-      mixIn(vessel.beaker.solution, puddle.r, puddle.g, puddle.b, puddle.mass, puddle.volume);
-      puddle.volume = 0;
-      puddle.mass = 0;
+      mixIn(vessel.beaker.solution, puddle);
+      drain(puddle);
       puddle.mesh.visible = false;
       break;
     }
@@ -1191,8 +1172,8 @@ function commit(vessel: Vessel) {
   const solution = vessel.beaker.solution;
   solution.volume = Math.max(0, solution.volume - vessel.outV);
   solution.mass = solution.volume > 0 ? Math.max(0, solution.mass - vessel.outM) : 0;
-  const { r, g, b, mass, volume } = vessel.incoming;
-  mixIn(solution, r, g, b, mass, volume);
+  solution.cloud = solution.volume > 0 ? Math.max(0, solution.cloud - vessel.outC) : 0;
+  mixIn(solution, vessel.incoming);
 }
 
 function updateMass(vessel: Vessel) {
@@ -1211,11 +1192,19 @@ function updateVesselVisual(vessel: Vessel) {
   const liquid = beaker.mesh.getObjectByName("liquid");
   if (liquid) liquid.visible = visible;
   vessel.cap.visible = visible;
-  tint(beaker.solution, color);
+  const alpha = shade(beaker.solution, color);
+  // Clear liquid must not hide the glass behind it.
+  const solid = alpha > 0.5;
   vessel.bodyMat.color.copy(color);
   vessel.bodyMat.emissive.copy(color);
+  vessel.bodyMat.opacity = alpha;
+  vessel.bodyMat.depthWrite = solid;
   (vessel.capMat.uniforms.color.value as THREE.Color).copy(color);
-  (vessel.stream.material as THREE.MeshStandardMaterial).color.copy(color);
+  vessel.capMat.uniforms.opacity.value = alpha;
+  vessel.capMat.depthWrite = solid;
+  const streamMat = vessel.stream.material as THREE.MeshStandardMaterial;
+  streamMat.color.copy(color);
+  streamMat.opacity = Math.max(STREAM_MIN_ALPHA, alpha);
 
   tmp2.copy(position).addScaledVector(vessel.surfaceUp, surface.plane);
   vessel.cap.position.copy(tmp2);
@@ -1294,7 +1283,8 @@ function writeDroplets(sim: FluidSim) {
     dummy.scale.set(radius, radius * stretch, radius);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
-    mesh.setColorAt(i, tint(drop, color));
+    shade(drop, color);
+    mesh.setColorAt(i, color);
   }
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -1309,8 +1299,8 @@ function writePuddles(sim: FluidSim) {
     puddle.mesh.visible = true;
     puddle.mesh.scale.setScalar(Math.max(0.006, puddleRadius(puddle.volume)));
     const mat = puddle.mesh.material as THREE.MeshStandardMaterial;
-    tint(puddle, mat.color);
+    const alpha = shade(puddle, mat.color);
     mat.color.multiplyScalar(0.82);
-    mat.opacity = 1;
+    mat.opacity = Math.max(PUDDLE_MIN_ALPHA, alpha);
   }
 }

@@ -14,6 +14,12 @@ const TOUCH = PAD_RADIUS + 0.002;
 const UNBLOCK = PAD_RADIUS + 0.012;
 const FIST_RADIUS = BEAKER_RADIUS * 1.15;
 const NEAR = 0.12;
+// How close each hand's palm or a fingertip has to be to a large vessel for F to carry it.
+const PAIR_TOUCH = 0.014;
+// Hands have to come from opposite sides, a bit past a right angle.
+const PAIR_OPPOSE = -0.15;
+// Centre of the palm pad, in the hand bone's frame.
+const PALM = new THREE.Vector3(0, 0.045, 0);
 // The bench pushes up on a beaker the whole time it is sitting there. That contact
 // gets heavy when the hand starts to lift, and it is not the glass being knocked
 // out of the fingers. Only a sideways hit, or the hand actually leaving the glass,
@@ -71,6 +77,8 @@ const thumbRadial = new THREE.Vector3();
 const fingerRadial = new THREE.Vector3();
 const solvedA = new THREE.Vector3();
 const solvedB = new THREE.Vector3();
+const sideR = new THREE.Vector3();
+const sideL = new THREE.Vector3();
 
 export function createHold(): Hold {
   return { grips: [], quiet: [] };
@@ -84,7 +92,7 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
   for (let i = hold.grips.length - 1; i >= 0; i--) {
     const grip = hold.grips[i];
     if (grip.paired) {
-      if (!hands.left.raised) release(hold, grip, world);
+      if (!hands.left.raised || pairLost(grip, dt)) release(hold, grip, world);
       else grip.age += dt;
       continue;
     }
@@ -94,7 +102,7 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
 
   // A large beaker between the palms is carried by the same joint as a pinch.
   // Squeezing it between the hands is what sends it flying.
-  if (hands.left.raised && hands.pair > 0.45 && !hold.grips.some((grip) => grip.arm === arm)) {
+  if (hands.left.raised && hands.pair > 0.65 && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = betweenHands(hands, hold, beakers);
     if (beaker) {
       const at = beaker.body.translation();
@@ -174,6 +182,21 @@ function release(hold: Hold, grip: Grip, world: RAPIER.World) {
   if (!hold.quiet.some((item) => item.beaker === grip.beaker)) {
     hold.quiet.push({ beaker: grip.beaker, time: 0 });
   }
+}
+
+function pairLost(grip: Grip, dt: number) {
+  if (grip.age < GRACE) return false;
+  const gap = separation(grip);
+  // A hard knock the joint cannot follow. Holding on past this is what winds the weld up.
+  if (gap > 0.12) return true;
+  if (gap > BREAK_SEPARATION) grip.stuck += dt;
+  else grip.stuck = 0;
+  if (grip.stuck > STUCK_TIME) return true;
+  grip.arm.hand.getWorldQuaternion(handQuat);
+  const rotation = grip.beaker.body.rotation();
+  bodyQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
+  desiredQuat.copy(handQuat).multiply(grip.handRel);
+  return rotationError(bodyQuat, desiredQuat, axis) > BREAK_ANGLE;
 }
 
 function lost(grip: Grip, world: RAPIER.World, dt: number) {
@@ -274,20 +297,18 @@ function aimFingers(arm: Arm, beakers: Beaker[], held: Beaker | undefined, reach
   arm.gripRadius = Math.max(0.012, radius);
 }
 
-// A large vessel sitting in the gap, with both hands on the glass.
+// A large vessel sitting in the gap, with both hands on the glass from opposite sides.
 function betweenHands(hands: Hands, hold: Hold, beakers: Beaker[]) {
-  hands.arm.hand.getWorldPosition(handPos);
-  hands.left.hand.getWorldPosition(fingerPos);
   let beaker: Beaker | null = null;
-  let best = 0.14;
+  let best = Infinity;
   for (const candidate of beakers) {
     if (candidate.radius <= BEAKER_RADIUS) continue;
     if (hold.grips.some((grip) => grip.beaker === candidate)) continue;
-    const at = candidate.body.translation();
-    bodyPos.set(at.x, at.y, at.z);
-    const gapR = handPos.distanceTo(bodyPos) - candidate.radius;
-    const gapL = fingerPos.distanceTo(bodyPos) - candidate.radius;
-    if (gapR > 0.05 || gapL > 0.05) continue;
+    const gapR = handGap(hands.arm, candidate, sideR);
+    if (gapR > PAIR_TOUCH) continue;
+    const gapL = handGap(hands.left, candidate, sideL);
+    if (gapL > PAIR_TOUCH) continue;
+    if (sideR.dot(sideL) > PAIR_OPPOSE) continue;
     const score = gapR + gapL;
     if (score < best) {
       best = score;
@@ -295,6 +316,25 @@ function betweenHands(hands: Hands, hold: Hold, beakers: Beaker[]) {
     }
   }
   return beaker;
+}
+
+// Gap from the glass to the nearest of the palm and fingertips, measured to the
+// surface so holding high or low on a tall pot counts the same. `side` gets the
+// direction out from the vessel at that point.
+function handGap(arm: Arm, beaker: Beaker, side: THREE.Vector3) {
+  arm.hand.getWorldPosition(handPos);
+  arm.hand.getWorldQuaternion(handQuat);
+  let best = Infinity;
+  const test = (sample: THREE.Vector3) => {
+    const gap = cylinderGap(sample, beaker);
+    // A point in the cavity is a large negative gap, closer than the wall. That is the
+    // hand through the glass, not a grip on it. A few millimetres of overlap still counts.
+    if (gap < -0.008) return;
+    if (gap < best && radial(sample, beaker, side)) best = gap;
+  };
+  test(point.copy(PALM).applyQuaternion(handQuat).add(handPos));
+  for (const pad of arm.pads) test(pad.bone.getWorldPosition(point));
+  return best;
 }
 
 // Thumb on one side of the cylinder, a finger on the other. The anchor is the
@@ -335,8 +375,7 @@ function pinch(arm: Arm, hold: Hold, beakers: Beaker[]) {
 
 function setHandCollision(beaker: Beaker, hit: boolean) {
   const filter = hit ? 0xffff : 0xffff ^ HAND;
-  beaker.collider.setCollisionGroups((filter << 16) | PROP);
-  for (const handle of beaker.handles) handle.collider.setCollisionGroups((filter << 16) | PROP);
+  for (let i = 0; i < beaker.body.numColliders(); i++) beaker.body.collider(i).setCollisionGroups((filter << 16) | PROP);
 }
 
 // Direction out from the axis of the part nearest the sample.

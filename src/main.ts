@@ -1,10 +1,10 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { bindInput, input } from "./input";
-import { createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } from "./player";
+import { applyFeel, createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } from "./player";
 import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { createHands, driveLeftHand, followLeftHand, settleHand, updateHands } from "./hands";
+import { createHands, driveLeftHand, followLeftHand, settleHand, tintSkin, updateHands } from "./hands";
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
 import { createLab, syncBeakers } from "./lab";
@@ -12,6 +12,8 @@ import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
 import { conditionOf, createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
+import { chemLabel } from "./sim/colorName";
+import { senseOf, type Sense } from "./sim/reactions";
 
 await RAPIER.init();
 
@@ -20,6 +22,7 @@ document.body.prepend(canvas);
 const prompt = document.getElementById("prompt")!;
 const pourReadout = document.getElementById("pour")!;
 const healthReadout = document.getElementById("health")!;
+const veil = document.getElementById("veil")!;
 bindInput(canvas, prompt);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -90,22 +93,40 @@ function frame(now: number) {
   last = now;
 
   world.integrationParameters.dt = dt;
-  updatePlayer(player, world, dt, grounded, verticalVelocity);
+  const sense = senseOf(body.organs, blood.doses, body.alive);
+  if (!body.alive || sense.operate < 0.12) {
+    input.space = false;
+    input.squeeze = false;
+    input.gripLocked = false;
+    input.pourX = 0;
+    input.pourY = 0;
+    if (!body.alive) {
+      input.keys.clear();
+      input.lookX = 0;
+      input.lookY = 0;
+    }
+  }
+  updatePlayer(player, world, dt, grounded, verticalVelocity, sense);
   updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
-  updateHands(hands, beakers, dt);
+  updateHands(hands, beakers, dt, sense);
   settleHand(hands, world);
   driveLeftHand(hands, beakers, dt);
   updateHold(hold, hands, beakers, world, dt);
   world.step();
-  followLeftHand(hands, world);
+  followLeftHand(hands, beakers, world);
   syncBeakers(beakers);
   updateHandShadow(handShadow, hands);
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
-  const drinker = player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
+  const drinker = body.alive && player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);
-  if (fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
-  renderHealth(healthReadout, body, blood, stepBody(body, blood, dt));
+  if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
+  const symptoms = stepBody(body, blood, dt);
+  const felt = senseOf(body.organs, blood.doses, body.alive);
+  applyFeel(player, felt);
+  tintSkin(hands, felt);
+  renderHealth(healthReadout, body, blood, symptoms);
+  renderVeil(veil, canvas, felt, player.clock);
   if (pouring) {
     const at = pouring.body.translation();
     const rotation = pouring.body.rotation();
@@ -125,6 +146,24 @@ function frame(now: number) {
 }
 
 requestAnimationFrame(frame);
+
+function renderVeil(root: HTMLElement, canvas: HTMLCanvasElement, sense: Sense, time: number) {
+  const beat = sense.pound > 0 ? 0.5 + 0.5 * Math.sin(time * sense.rate * Math.PI * 2) : 0;
+  const pulse = sense.pulse > 0 ? 0.35 + 0.65 * Math.sin(time * (2.2 + sense.pulse * 1.4)) : 1;
+  const wash = Math.min(1, sense.wash * (0.65 + 0.35 * Math.abs(pulse)));
+  const [r, g, b] = sense.tint;
+  root.style.opacity = String(Math.min(1, Math.max(wash * 0.85, sense.vignette * 0.5) + beat * sense.pound * 0.22));
+  root.style.background = `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+  const spread = 50 + sense.vignette * 220;
+  const rim = Math.round(40 + sense.pound * beat * 180);
+  root.style.boxShadow = `inset 0 0 ${spread}px ${16 + sense.vignette * 120}px rgba(${rim}, 0, 0, ${0.25 + sense.vignette * 0.7})`;
+  const filter = [
+    sense.blur > 0.03 ? `blur(${(sense.blur * 3.6).toFixed(2)}px)` : "",
+    sense.pulse > 0.15 ? `hue-rotate(${(Math.sin(time * 2.4) * sense.pulse * 70).toFixed(1)}deg) saturate(${(1 + sense.pulse).toFixed(2)})` : "",
+    sense.pound > 0.2 ? `contrast(${(1 + beat * sense.pound * 0.35).toFixed(2)})` : "",
+  ].filter(Boolean);
+  canvas.style.filter = filter.join(" ");
+}
 
 function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Symptom[]) {
   const condition = conditionOf(body, symptoms);
@@ -153,7 +192,7 @@ function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Sym
     circulating.length === 0
       ? `<div class="meta">Blood is clear</div>`
       : circulating
-          .map((dose) => `<div class="dose"><i style="background:${dose.hex}"></i><span>${dose.hex}</span><b>${formatMass(dose.mass)}</b></div>`)
+          .map((dose) => `<div class="dose"><i style="background:${dose.hex}"></i><span>${chemLabel(dose.hex)}</span><b>${formatMass(dose.mass)}</b></div>`)
           .join("");
   const pending =
     blood.pending.length === 0
@@ -162,7 +201,7 @@ function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Sym
         blood.pending
           .map(
             (dose) =>
-              `<div class="dose"><i style="background:${dose.hex}"></i><span>${dose.hex}</span><b>${formatMass(dose.mass)} · ${Math.max(0, dose.left).toFixed(1)}s</b></div>`,
+              `<div class="dose"><i style="background:${dose.hex}"></i><span>${chemLabel(dose.hex)}</span><b>${formatMass(dose.mass)} · ${Math.max(0, dose.left).toFixed(1)}s</b></div>`,
           )
           .join("");
   root.innerHTML = `<div class="condition">${condition}</div><div class="headline">${headline}</div>${failing}${organs}<div class="section">In the blood</div>${bloodLines}${pending}`;

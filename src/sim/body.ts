@@ -2,6 +2,7 @@ import { analyzeBalance } from "./balance";
 import { derive, draw, type Solution } from "./compound";
 import { config } from "./config";
 import { drive, noise } from "./effect";
+import { catalogDrive, catalogFade } from "./reactions";
 import { createRng } from "./rng";
 
 export const organNames = ["heart", "brain", "liver"] as const;
@@ -133,7 +134,7 @@ export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
 
   const liver = body.organs.find((organ) => organ.name === "liver");
   const rate = clearanceRate(liver);
-  for (const dose of blood.doses) dose.mass *= Math.exp(-rate * dt);
+  for (const dose of blood.doses) dose.mass *= Math.exp(-rate * catalogFade(dose.hex) * dt);
   blood.doses = blood.doses.filter((dose) => dose.mass > 1e-5);
 
   for (let i = blood.pending.length - 1; i >= 0; i--) {
@@ -206,7 +207,10 @@ function clearanceRate(liver: Organ | undefined) {
 export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { organs: Organ[]; symptoms: Symptom[] } {
   const next = organs.map((organ) => {
     let totalDrive = organ.side;
-    for (const dose of doses) totalDrive += drive(derive(dose.hex), organ, dose.mass);
+    for (const dose of doses) {
+      const known = catalogDrive(dose.hex, organ.name);
+      totalDrive += known === null ? drive(derive(dose.hex), organ, dose.mass) : known * dose.mass;
+    }
     totalDrive *= sensitivity(organ.integrity);
     const deflection = Math.tanh((totalDrive - organ.adaptation) / config.deflectionScale);
     return { ...organ, deflection };

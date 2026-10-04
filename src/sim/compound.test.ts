@@ -48,27 +48,50 @@ describe("complement and mix", () => {
     expect(flipped.potency).toBeCloseTo(compound.potency, 8);
   });
 
-  it("mixes a compound with its complement into gray with zero potency", () => {
+  it("mixes a saturated compound with its complement into a dark gray with zero potency", () => {
     const red = solution("#FF0000", 2, 1);
     const mixed = mix(red, solution(complement(red.hex), 2, 1));
     const compound = derive(mixed.hex);
-    expect(compound.hex).toBe("#808080");
     expect(compound.potency).toBe(0);
+    expect(compound.r).toBeLessThan(0.25);
     expect(mixed.mass).toBe(4);
     expect(mixed.volume).toBe(2);
   });
 
-  it("mixes equal red and green into a weaker yellow and adds the color-plane vector", () => {
-    const red = solution("#FF0000", 1, 1);
-    const green = solution("#00FF00", 1, 1);
-    const mixed = mix(red, green);
-    const compound = derive(mixed.hex);
-    const redCompound = derive(red.hex);
-    const greenCompound = derive(green.hex);
-    expect(compound.hue).toBeCloseTo(60, 5);
-    expect(compound.potency).toBeLessThan(1);
-    expect(compound.x * mixed.mass).toBeCloseTo(redCompound.x * red.mass + greenCompound.x * green.mass, 2);
-    expect(compound.y * mixed.mass).toBeCloseTo(redCompound.y * red.mass + greenCompound.y * green.mass, 2);
+  it("mixes like dyes: blue and yellow make green", () => {
+    const mixed = derive(mix(solution("#2D6FDB", 1, 1), solution("#E8C43A", 1, 1)).hex);
+    expect(mixed.hue).toBeGreaterThan(90);
+    expect(mixed.hue).toBeLessThan(150);
+    expect(mixed.g).toBeGreaterThan(mixed.r);
+    expect(mixed.g).toBeGreaterThan(mixed.b);
+  });
+
+  it("mixes equal red and green into a weaker, darker yellow", () => {
+    const mixed = derive(mix(solution("#FF0000", 1, 1), solution("#00FF00", 1, 1)).hex);
+    expect(mixed.hue).toBeCloseTo(60, 5);
+    expect(mixed.potency).toBeLessThan(1);
+  });
+
+  it("weights by mass and does not care how a pour is split", () => {
+    const blue = solution("#2D6FDB", 3, 1);
+    const yellow = solution("#E8C43A", 1, 1);
+    const whole = mix(blue, yellow);
+    const halves = mix(mix(blue, solution("#E8C43A", 0.5, 0.5)), solution("#E8C43A", 0.5, 0.5));
+    for (const channel of ["r", "g", "b"] as const) {
+      expect(derive(halves.hex)[channel]).toBeCloseTo(derive(whole.hex)[channel], 2);
+    }
+    expect(derive(whole.hex).b).toBeGreaterThan(derive(mix(solution("#2D6FDB", 1, 1), yellow).hex).b);
+  });
+
+  it("does not let a trace of black or a zero channel wipe out a mix", () => {
+    const tinted = derive(mix(solution("#E8C43A", 99, 1), solution("#000000", 1, 1)).hex);
+    expect(tinted.r).toBeGreaterThan(0.8);
+    const magenta = derive(mix(solution("#00FF00", 99, 1), solution("#FF00FF", 1, 1)).hex);
+    expect(magenta.g).toBeGreaterThan(0.9);
+  });
+
+  it("leaves a single ingredient's hex exact", () => {
+    expect(mix(solution("#FF00FF", 2, 1), solution("#00FF00", 0, 1)).hex).toBe("#FF00FF");
   });
 });
 
