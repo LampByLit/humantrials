@@ -12,6 +12,7 @@ export const input = {
   squeeze: false,
   locked: false,
   playing: false,
+  ready: false,
   slow: (): boolean => input.keys.has("ShiftLeft") || input.keys.has("ShiftRight"),
 };
 
@@ -83,6 +84,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   const onPress = (event: MouseEvent) => {
     if (event.button !== 0 && event.button !== 2) return;
     if (!input.playing) {
+      if (!input.ready) return;
       input.playing = true;
       prompt.classList.add("hidden");
       canvas.requestPointerLock();

@@ -84,6 +84,8 @@ export type Arm = {
   raised: boolean;
   blend: number;
   squeeze: number;
+  // 0 is the working hand. 1 is the okay sign, held while E is down.
+  ok: number;
   upper: THREE.Bone;
   elbow: THREE.Bone;
   hand: THREE.Bone;
@@ -297,6 +299,7 @@ function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1, fil
     raised: true,
     blend: 1,
     squeeze: 0,
+    ok: 0,
     upper,
     elbow,
     hand,
@@ -786,6 +789,8 @@ function poseArm(arm: Arm, dt: number, squeezing: boolean, lockBlend: boolean, a
   const curlTarget = Math.max(squeezeTarget, assist);
   const close = 1 - Math.exp(-SQUEEZE_LERP * dt);
   arm.squeeze += (squeezeTarget - arm.squeeze) * close;
+  const okTarget = arm.side === 1 && input.keys.has("KeyE") ? 1 : 0;
+  arm.ok += (okTarget - arm.ok) * close;
   for (const pad of arm.pads) {
     // A pad that has met the glass stops. Opening still plays.
     if (pad.blocked && curlTarget > pad.curl) continue;
@@ -799,27 +804,41 @@ function poseArm(arm: Arm, dt: number, squeezing: boolean, lockBlend: boolean, a
   // Every joint hinges about its local Z, whose sign mirrors between the two hands. The
   // thumb base and the knuckle fan are the exceptions: they run about local X, which
   // points the same way on both hands.
+  const ok = arm.ok;
   for (const digit of arm.digits) {
     const bone = digit.bone;
     bone.quaternion.copy(digit.rest);
+    let z = 0;
+    let x = 0;
     if (bone.name.startsWith("Thumb_3")) {
-      thumbSpin.setFromAxisAngle(zAxis, -arm.side * THUMB_AIM);
-      bone.quaternion.multiply(thumbSpin);
+      z = -arm.side * THUMB_AIM;
     } else if (bone.name.startsWith("Thumb_2")) {
-      thumbSpin.setFromAxisAngle(xAxis, THUMB_KNUCKLE_STRAIGHT);
-      bone.quaternion.multiply(thumbSpin);
+      x = THUMB_KNUCKLE_STRAIGHT;
     } else if (bone.name.startsWith("Thumb_1")) {
-      thumbSpin.setFromAxisAngle(xAxis, THUMB_TIP_STRAIGHT);
-      bone.quaternion.multiply(thumbSpin);
+      x = THUMB_TIP_STRAIGHT;
     } else if (!digit.thumb) {
       const curl = padCurl(arm, bone.name);
       const wrap = Math.min(MAX_JOINT_CURL, digit.length / arm.gripRadius);
-      spin.setFromAxisAngle(zAxis, -arm.side * (digit.claw + curl * (wrap - digit.claw)));
+      z = -arm.side * (digit.claw + curl * (wrap - digit.claw));
+      x = digit.fan * (1 - curl);
+    }
+    if (ok > 0) {
+      let oz = 0;
+      let ox = 0;
+      if (bone.name.startsWith("Index")) oz = -arm.side * 1.15;
+      else if (bone.name.startsWith("Thumb_3")) oz = -arm.side * 0.95;
+      else if (bone.name.startsWith("Thumb_2")) ox = 0.85;
+      else if (bone.name.startsWith("Thumb_1")) ox = 1.05;
+      z += (oz - z) * ok;
+      x += (ox - x) * ok;
+    }
+    if (z !== 0) {
+      spin.setFromAxisAngle(zAxis, z);
       bone.quaternion.multiply(spin);
-      if (digit.fan !== 0) {
-        spin.setFromAxisAngle(xAxis, digit.fan * (1 - curl));
-        bone.quaternion.multiply(spin);
-      }
+    }
+    if (x !== 0) {
+      spin.setFromAxisAngle(xAxis, x);
+      bone.quaternion.multiply(spin);
     }
   }
 }

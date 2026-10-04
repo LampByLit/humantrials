@@ -14,8 +14,12 @@ import { toChem } from "./fluid/solution";
 import { conditionOf, createBlood, createBody, stepBody, swallow, type Blood, type Body, type Symptom } from "./sim/body";
 import { chemLabel } from "./sim/colorName";
 import { senseOf, type Sense } from "./sim/reactions";
+import { createTitle } from "./title";
 
+const loading = document.getElementById("loading")!;
+loading.textContent = "Loading physics";
 await RAPIER.init();
+loading.textContent = "Loading the laboratory";
 
 const canvas = document.createElement("canvas");
 document.body.prepend(canvas);
@@ -62,7 +66,13 @@ pmrem.dispose();
 
 const player = createPlayer(scene, world, camera);
 const beakers = createLab(scene, world);
-const [hands] = await Promise.all([createHands(world), dressLab(scene, world)]);
+const [hands, , title] = await Promise.all([
+  createHands(world),
+  dressLab(scene, world),
+  createTitle(renderer),
+]);
+loading.classList.add("hidden");
+input.ready = true;
 const reach = createReach(hands, player);
 const hold = createHold();
 const handShadow = createHandShadow(scene, camera, hands);
@@ -84,6 +94,7 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  title.resize();
 });
 
 let last = performance.now();
@@ -91,6 +102,14 @@ let last = performance.now();
 function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  document.body.classList.toggle("playing", input.playing);
+
+  if (!input.playing) {
+    title.update(now / 1000);
+    renderer.render(title.scene, title.camera);
+    requestAnimationFrame(frame);
+    return;
+  }
 
   world.integrationParameters.dt = dt;
   const sense = senseOf(body.organs, blood.doses, body.alive);
