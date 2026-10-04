@@ -88,6 +88,70 @@ function solid(world: RAPIER.World, object: THREE.Object3D) {
   );
 }
 
+// The door frame atlas paints a photo of the slab and a hazard tigerstripe on one mesh.
+// Keep the stripe block and flatten every other texel so the door matches the room.
+function keepTigerstripe(material: THREE.MeshStandardMaterial) {
+  const map = material.map;
+  const image = map?.image as (CanvasImageSource & { width?: number; height?: number }) | undefined;
+  if (!map || !image?.width || !image.height) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return;
+  ctx.drawImage(image, 0, 0);
+  const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = frame.data;
+  const w = canvas.width;
+  const h = canvas.height;
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const r = px[i];
+      const g = px[i + 1];
+      const b = px[i + 2];
+      if (r > 140 && g > 90 && b < 110 && r > b + 60 && g > b + 30) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return;
+  const pad = 2;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(w - 1, maxX + pad);
+  maxY = Math.min(h - 1, maxY + pad);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x >= minX && x <= maxX && y >= minY && y <= maxY) continue;
+      const i = (y * w + x) * 4;
+      px[i] = 0xf6;
+      px[i + 1] = 0xf6;
+      px[i + 2] = 0xf4;
+    }
+  }
+  ctx.putImageData(frame, 0, 0);
+  const next = new THREE.CanvasTexture(canvas);
+  next.colorSpace = map.colorSpace;
+  next.flipY = map.flipY;
+  next.wrapS = map.wrapS;
+  next.wrapT = map.wrapT;
+  next.needsUpdate = true;
+  material.map = next;
+  material.metalnessMap = null;
+  material.roughnessMap = null;
+  material.metalness = 0;
+  material.roughness = 0.94;
+  material.needsUpdate = true;
+}
+
 function addModule(scene: THREE.Scene, source: THREE.Object3D, x: number, z: number, rotY: number) {
   const piece = source.clone(true);
   piece.position.set(x, MODULE_Y, z);
@@ -124,13 +188,49 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
       if (mesh.isMesh) mesh.material = paint;
     });
   }
-  // The exit model brings its own photo wall and window. Paint those panels to match the room.
+  // The exit model brings a photo wall, a photo door, and a window. Paint the wall and the
+  // door leaf to match the room, leave the hazard tigerstripe on the frame, and close the window.
+  const striped = new Set<THREE.Material>();
+  exitWall.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    const material = mesh.material;
+    if (!mesh.isMesh || Array.isArray(material) || material.name !== "SM_DoorFrame_Jamb" || striped.has(material)) return;
+    striped.add(material);
+    keepTigerstripe(material as THREE.MeshStandardMaterial);
+  });
+  const windowBox = new THREE.Box3();
+  const wallBox = new THREE.Box3();
+  const piece = new THREE.Box3();
+  const windowPieces: THREE.Object3D[] = [];
+  exitWall.updateMatrixWorld(true);
   exitWall.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh) return;
     const name = `${mesh.parent?.name ?? ""} ${mesh.name}`.toLowerCase();
-    if (name.includes("wall") || name.includes("window")) mesh.material = plaster;
+    if (name.includes("window") && !name.includes("wall")) {
+      windowBox.union(piece.setFromObject(mesh));
+      windowPieces.push(mesh);
+      return;
+    }
+    if (name.includes("wall") && name.includes("window")) wallBox.union(piece.setFromObject(mesh));
+    if (name.includes("doorleaf") || name.includes("wall")) mesh.material = plaster;
   });
+  for (const mesh of windowPieces) mesh.removeFromParent();
+  if (!windowBox.isEmpty()) {
+    const size = windowBox.getSize(new THREE.Vector3());
+    const center = windowBox.getCenter(new THREE.Vector3());
+    if (!wallBox.isEmpty()) {
+      center.z = (wallBox.min.z + wallBox.max.z) / 2;
+      size.z = wallBox.max.z - wallBox.min.z;
+    }
+    const fill = new THREE.Mesh(new THREE.BoxGeometry(size.x + 0.08, size.y + 0.08, size.z + 0.02), plaster);
+    fill.castShadow = true;
+    fill.receiveShadow = true;
+    exitWall.add(fill);
+    exitWall.updateMatrixWorld(true);
+    fill.position.copy(exitWall.worldToLocal(center));
+    fill.quaternion.copy(exitWall.getWorldQuaternion(new THREE.Quaternion()).invert());
+  }
 
   const slots = (half: number) => {
     const out: number[] = [];
