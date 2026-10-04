@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import listed from "../../concept/chems.json";
 import { createBlood, createBody, evaluate, stepBody, type Organ } from "./body";
 import { config } from "./config";
+import { analogOf, analogsOf } from "./analogs";
 import { catalogDrive, catalogFade, catalogHexes, senseOf } from "./reactions";
 import { createRng } from "./rng";
 
@@ -128,6 +129,68 @@ describe("catalog reactions", () => {
     const covered = evaluate(organs, [caffeine, naloxone]);
     expect(covered.organs[0].deflection).toBeCloseTo(alone.organs[0].deflection, 8);
     expect(evaluate(organs, [naloxone]).organs.every((item) => item.deflection === 0)).toBe(true);
+  });
+
+  it("gives each catalog chemical 32 weaker analogs", () => {
+    const seen = new Set<string>();
+    for (const entry of listed) {
+      const analogs = analogsOf(entry.hex);
+      expect(analogs).toHaveLength(32);
+      for (const analog of analogs) {
+        expect(analog.parent).toBe(entry.hex.toUpperCase());
+        expect(analog.scale).toBeLessThan(1);
+        expect(analog.scale).toBeGreaterThan(0);
+        expect(seen.has(analog.hex)).toBe(false);
+        expect(catalogHexes).not.toContain(analog.hex);
+        seen.add(analog.hex);
+      }
+    }
+    expect(seen.size).toBe(listed.length * 32);
+    expect(analogOf("#123456")).toBeNull();
+    expect(catalogDrive("#123456", "heart")).toBeNull();
+  });
+
+  it("lets a caffeine analog act like caffeine, only weaker and a little off", () => {
+    const organs = [organ("heart", 10), organ("brain", 200), organ("liver", 40)];
+    const dose = 0.2;
+    const exact = evaluate(organs, [{ hex: "#FF9900", mass: dose }]);
+    const analogs = analogsOf("#FF9900");
+    const moved = evaluate([organ("heart", 180), organ("brain", 20), organ("liver", 300)], [{ hex: analogs[0].hex, mass: dose }]);
+    const near = evaluate(organs, [{ hex: analogs[0].hex, mass: dose }]);
+    expect(near.organs.map((item) => item.deflection)).toEqual(moved.organs.map((item) => item.deflection));
+    expect(near.organs[0].deflection).toBeGreaterThan(0);
+    expect(near.organs[0].deflection).toBeLessThan(exact.organs[0].deflection);
+    expect(near.organs[1].deflection).toBeGreaterThan(0);
+    expect(near.organs[1].deflection).toBeLessThan(exact.organs[1].deflection);
+    const hearts = new Set(analogs.map((analog) => catalogDrive(analog.hex, "heart")!.toFixed(4)));
+    expect(hearts.size).toBeGreaterThan(4);
+  });
+
+  it("carries opioid block and milk resistance onto analogs", () => {
+    const organs = [organ("heart", 0), organ("brain", 90), organ("liver", 200)];
+    const fentanyl = analogsOf("#6600FF")[0].hex;
+    const alone = evaluate(organs, [{ hex: fentanyl, mass: 0.2 }]);
+    const reversed = evaluate(organs, [{ hex: fentanyl, mass: 0.2 }, { hex: "#00CCAA", mass: 0.12 }]);
+    expect(alone.organs[1].deflection).toBeLessThan(0);
+    expect(reversed.organs[1].deflection).toBeGreaterThan(alone.organs[1].deflection);
+
+    const toxin = analogsOf("#AAFF00")[0].hex;
+    const bare = evaluate(organs, [{ hex: toxin, mass: 0.15 }]);
+    const covered = evaluate(organs, [{ hex: toxin, mass: 0.15 }, { hex: "#FFFFFF", mass: 0.3 }]);
+    expect(bare.organs[1].deflection).toBeGreaterThan(0);
+    expect(covered.organs[1].deflection).toBeCloseTo(bare.organs[1].deflection, 8);
+
+    const body = {
+      organs: [organ("heart", 0), organ("brain", 120), organ("liver", 240)],
+      alive: true,
+      critical: 0,
+      cause: null,
+      rng: createRng(4),
+    };
+    const blood = createBlood();
+    blood.doses.push({ hex: analogsOf("#2A2A55")[0].hex, mass: 5 });
+    for (let i = 0; i < 600; i++) stepBody(body, blood, 0.1);
+    expect(body.alive).toBe(true);
   });
 
   it("stops a dead body", () => {

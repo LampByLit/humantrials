@@ -16,4 +16,8 @@ describe("color names", () => {
     expect(latinName("#FF0000")).toBe("albus merus ruber");
     expect(namedColor(snapped)).toBe(snapped);
   });
+
+  it("shows the hex when that color has no exact name", () => {
+    expect(chemLabel("#000001")).toBe("#000001");
+  });
 });

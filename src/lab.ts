@@ -332,7 +332,7 @@ const plastic = new THREE.MeshStandardMaterial({
 });
 
 function markShadow(mesh: THREE.Mesh) {
-  mesh.castShadow = true;
+  mesh.castShadow = false;
   mesh.receiveShadow = true;
 }
 
@@ -646,6 +646,18 @@ function dropNest(world: RAPIER.World, index: number) {
   nests.splice(index, 1);
 }
 
+const casting = new Set<Beaker>();
+
+function setCast(beaker: Beaker, on: boolean) {
+  if (on === casting.has(beaker)) return;
+  if (on) casting.add(beaker);
+  else casting.delete(beaker);
+  beaker.mesh.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.isMesh) mesh.castShadow = on;
+  });
+}
+
 // A smaller vessel that has settled inside a larger one is welded there, so lifting
 // the outer one cannot leave it behind to fall through the floor.
 export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Beaker[]) {
@@ -672,6 +684,10 @@ export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Bea
       }
     }
   }
+  // Glass only casts while it is held or welded inside another vessel.
+  const onWeld = new Set<Beaker>(held);
+  for (const nest of nests) onWeld.add(nest.inner);
+  for (const beaker of beakers) setCast(beaker, onWeld.has(beaker));
 }
 
 export let intake: Beaker | null = null;

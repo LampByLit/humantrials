@@ -15,6 +15,7 @@ import { toChem } from "./fluid/solution";
 import { abilityNotes, bloodCard, organClass, organTone, receiptCard, symptomCard, tracePolyline, traceSamples, vitalReadout } from "./healthHud";
 import { createAffect, stepAffect } from "./sim/affect";
 import { createBlood, createBody, pilotOpen, stepBody, swallow, symptomsFrom, type Blood, type OrganName } from "./sim/body";
+import { isAnalog } from "./sim/analogs";
 import { chemLabel, isCatalog } from "./sim/colorName";
 import { senseOf, type Sense } from "./sim/reactions";
 import { createTitle } from "./title";
@@ -260,7 +261,7 @@ function showEyes(root: HTMLElement, camera: THREE.PerspectiveCamera, hands: Han
     return;
   }
   const sample = toChem(found.solution);
-  const known = sample.mass > 1e-8 && (isCatalog(sample.hex) || pilotOpen(blood));
+  const known = sample.mass > 1e-8 && (isCatalog(sample.hex) || isAnalog(sample.hex) || pilotOpen(blood));
   if (!known) {
     root.classList.remove("show");
     return;

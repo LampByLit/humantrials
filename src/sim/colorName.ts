@@ -53,20 +53,20 @@ export function colorName(hex: string): string {
   return nearest(hex.toUpperCase()).name;
 }
 
-/** The common name of a catalog drug, otherwise the nearest color name. */
+/** Catalog name, or the exact color-list name. Anything else is shown as its hex. */
 export function chemLabel(hex: string): string {
   const key = hex.toUpperCase();
-  return drugName.get(key) ?? colorName(key);
+  return drugName.get(key) ?? byHex.get(key)?.name ?? key;
 }
 
 export function isCatalog(hex: string): boolean {
   return drugName.has(hex.toUpperCase());
 }
 
-/** Latin catalog name, otherwise the nearest color name. */
+/** Latin catalog name, an exact color name, or the hex itself. */
 export function nomenclature(hex: string): string {
   const key = hex.toUpperCase();
-  return drugLatin.get(key) ?? colorName(key);
+  return drugLatin.get(key) ?? byHex.get(key)?.name ?? key;
 }
 
 /** Snap a shelf color onto an exact named hexchem. */

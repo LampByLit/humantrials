@@ -22,37 +22,55 @@ function makeScreen(): Screen {
   return { canvas, ctx: canvas.getContext("2d")!, map };
 }
 
-function paint(screen: Screen, lines: string[]) {
+type Line = { text: string; swatch?: string };
+
+const GREEN = "#39ff7a";
+const SWATCH = 40;
+
+function paint(screen: Screen, lines: Line[]) {
   const { canvas, ctx, map } = screen;
   ctx.fillStyle = "#031208";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#39ff7a";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = "bold 44px Consolas, monospace";
   const step = 64;
   const top = canvas.height / 2 - ((lines.length - 1) * step) / 2;
-  lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2, top + i * step, 480));
+  lines.forEach((line, i) => {
+    const y = top + i * step;
+    const x = line.swatch ? canvas.width / 2 + (SWATCH + 16) / 2 : canvas.width / 2;
+    ctx.fillStyle = GREEN;
+    ctx.fillText(line.text, x, y, 420);
+    if (!line.swatch) return;
+    const left = x - Math.min(ctx.measureText(line.text).width, 420) / 2 - 16 - SWATCH;
+    ctx.fillStyle = line.swatch;
+    ctx.fillRect(left, y - SWATCH / 2, SWATCH, SWATCH);
+    // An outline keeps a near-black part visible against the dark screen.
+    ctx.strokeStyle = GREEN;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(left, y - SWATCH / 2, SWATCH, SWATCH);
+  });
   map.needsUpdate = true;
 }
 
 const code = (hex: string) => `0x${hex.slice(1)}`;
-const recipe = (parts: string[]) => parts.map((part, i) => (i < parts.length - 1 ? `${code(part)} &` : code(part)));
+const recipe = (parts: string[]): Line[] =>
+  parts.map((part, i) => ({ text: i < parts.length - 1 ? `${code(part)} &` : code(part), swatch: part }));
 
 function show(hex: string | null) {
   if (!hex) {
-    paint(screens[0], ["TWO EQUAL PARTS", "—"]);
-    paint(screens[1], ["THREE EQUAL PARTS", "—"]);
+    paint(screens[0], [{ text: "TWO EQUAL PARTS" }, { text: "—" }]);
+    paint(screens[1], [{ text: "THREE EQUAL PARTS" }, { text: "—" }]);
     return;
   }
   const two = twoParts(hex);
   const three = threeParts(hex);
   if (!two && !three) {
-    for (const screen of screens) paint(screen, ["ELEMENTAL HEXCHEM", code(hex)]);
+    for (const screen of screens) paint(screen, [{ text: "ELEMENTAL HEXCHEM" }, { text: code(hex), swatch: hex }]);
     return;
   }
-  paint(screens[0], ["TWO EQUAL PARTS", ...(two ? recipe(two) : ["—"])]);
-  paint(screens[1], ["THREE EQUAL PARTS", ...(three ? recipe(three) : ["—"])]);
+  paint(screens[0], [{ text: "TWO EQUAL PARTS" }, ...(two ? recipe(two) : [{ text: "—" }])]);
+  paint(screens[1], [{ text: "THREE EQUAL PARTS" }, ...(three ? recipe(three) : [{ text: "—" }])]);
 }
 
 // Empties the well each frame; the screens only repaint when the pour changes color.

@@ -1,4 +1,9 @@
-// Catalog substances push named organs directly. Hue tuning is for every other hex.
+import { analogOf, type Analog } from "./analogs";
+import { config } from "./config";
+
+// Catalog substances push named organs directly. A nearby analog uses that profile,
+// weaker and shifted a little by how its color sits off the original. Hue tuning
+// is for every other hex.
 // Coefficients are drive per unit of mass already in the blood. A 10mL stock sip
 // arrives as about 0.06. Fade multiplies clearance: nicotine leaves quickly, a toxin stays.
 
@@ -188,8 +193,62 @@ const profiles: Record<string, Profile> = {
   "#CCFF00": drug(2.8, 1.8, 0, { shake: 1.4, pound: 2.4, wash: 0.7, tint: WARM, flush: 1.4, skin: FLUSH }),
 };
 
+function bend(profile: Profile, analog: Analog): Profile {
+  const mag = Math.hypot(analog.dr, analog.dg, analog.db) || 1;
+  const r = analog.dr / mag;
+  const g = analog.dg / mag;
+  const b = analog.db / mag;
+  const leak = config.analogs.leak;
+  const feel = (value: number, bias: number) => Math.max(0, value * (1 + 0.4 * bias));
+  return {
+    ...profile,
+    heart: profile.heart * (1 - leak * Math.abs(g)) + profile.brain * leak * r,
+    brain: profile.brain * (1 - leak * Math.abs(r)) + profile.heart * leak * b,
+    liver: profile.liver * (1 - leak * Math.abs(b)) + profile.brain * leak * g,
+    shake: feel(profile.shake, r),
+    pound: feel(profile.pound, r),
+    spasm: feel(profile.spasm, g),
+    blur: feel(profile.blur, b),
+    slow: feel(profile.slow, b),
+    sway: feel(profile.sway, b),
+    numb: feel(profile.numb, -r),
+    trip: feel(profile.trip, -r),
+    drift: feel(profile.drift, b),
+    mud: feel(profile.mud, g),
+  };
+}
+
+function weaken(profile: Profile, scale: number): Profile {
+  const n = (value: number) => value * scale;
+  return {
+    ...profile,
+    heart: n(profile.heart),
+    brain: n(profile.brain),
+    liver: n(profile.liver),
+    shake: n(profile.shake),
+    spasm: n(profile.spasm),
+    pound: n(profile.pound),
+    sway: n(profile.sway),
+    blur: n(profile.blur),
+    slow: n(profile.slow),
+    numb: n(profile.numb),
+    wash: n(profile.wash),
+    flush: n(profile.flush),
+    pulse: n(profile.pulse),
+    trip: n(profile.trip),
+    drift: n(profile.drift),
+    mud: n(profile.mud),
+  };
+}
+
 function profileOf(hex: string): Profile | null {
-  return profiles[hex.toUpperCase()] ?? null;
+  const key = hex.toUpperCase();
+  const exact = profiles[key];
+  if (exact) return exact;
+  const analog = analogOf(key);
+  if (!analog) return null;
+  const parent = profiles[analog.parent];
+  return parent ? weaken(bend(parent, analog), analog.scale) : null;
 }
 
 export function catalogDrive(hex: string, organ: "heart" | "brain" | "liver"): number | null {
@@ -219,8 +278,13 @@ export function blockScale(doses: readonly { hex: string; mass: number }[]): num
   return Math.exp(-mass * 25);
 }
 
+function parentHex(hex: string): string {
+  const key = hex.toUpperCase();
+  return analogOf(key)?.parent ?? key;
+}
+
 export function isOpioid(hex: string): boolean {
-  return OPIOIDS.has(hex.toUpperCase());
+  return OPIOIDS.has(parentHex(hex));
 }
 
 export const MILK_HEX = "#FFFFFF";
@@ -235,7 +299,7 @@ export function milkScale(doses: readonly { hex: string; mass: number }[]): numb
 }
 
 export function milkReaches(hex: string): boolean {
-  return !BEYOND_MILK.has(hex.toUpperCase());
+  return !BEYOND_MILK.has(parentHex(hex));
 }
 
 export const catalogHexes = Object.keys(profiles);
