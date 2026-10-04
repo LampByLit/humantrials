@@ -71,8 +71,6 @@ const [hands, , title] = await Promise.all([
   dressLab(scene, world),
   createTitle(renderer),
 ]);
-loading.classList.add("hidden");
-input.ready = true;
 const reach = createReach(hands, player);
 const hold = createHold();
 const handShadow = createHandShadow(scene, camera, hands);
@@ -82,6 +80,13 @@ const blood = createBlood();
 const pourAnchor = new THREE.Vector3();
 const pourUp = new THREE.Vector3();
 const pourQuat = new THREE.Quaternion();
+
+// The title only appears once the lab has been drawn, so the first click is not
+// waiting on shader and shadow compilation.
+await renderer.compileAsync(scene, camera);
+renderer.render(scene, camera);
+loading.classList.add("hidden");
+input.ready = true;
 
 if (import.meta.env.DEV) {
   Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood } });

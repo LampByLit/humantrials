@@ -42,6 +42,8 @@ const THUMB_AIM = 1.25;
 // runs straight out to the left instead of hooking forward. Same sign on both hands.
 const THUMB_KNUCKLE_STRAIGHT = -0.4;
 const THUMB_TIP_STRAIGHT = -0.35;
+// Tips the okay sign up toward the camera. Positive X drops the arm, so this is negative.
+const OK_WRIST = -0.7;
 const SPLAY_ANGLE = 0.34;
 // Palms meet this far apart when F brings the left hand in from the side.
 const PALM_GAP = BEAKER_RADIUS * 2;
@@ -800,6 +802,10 @@ function poseArm(arm: Arm, dt: number, squeezing: boolean, lockBlend: boolean, a
   armSpread(arm);
 
   arm.hand.quaternion.copy(arm.restHand);
+  if (arm.ok > 0) {
+    spin.setFromAxisAngle(xAxis, OK_WRIST * arm.ok);
+    arm.hand.quaternion.multiply(spin);
+  }
 
   // Every joint hinges about its local Z, whose sign mirrors between the two hands. The
   // thumb base and the knuckle fan are the exceptions: they run about local X, which
