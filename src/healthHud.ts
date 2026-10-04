@@ -120,6 +120,11 @@ function heartBeat(phase: number) {
   return 0;
 }
 
+/** Bar width for a nutrition level. 1 is full; anything past that stays full. */
+export function needFill(level: number) {
+  return `${Math.max(0, Math.min(100, level * 100)).toFixed(0)}%`;
+}
+
 export function symptomCard(symptoms: readonly Pick<Symptom, "direction" | "band" | "text">[]) {
   if (!symptoms.length) return "";
   const lines = symptoms

@@ -303,6 +303,39 @@ body.dead #health {
   opacity: 0.48;
 }
 
+#needs .need {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+#needs .level {
+  height: 5px;
+  background: rgba(231, 228, 220, 0.12);
+  border-radius: 2px;
+}
+
+#needs .level b {
+  display: block;
+  height: 5px;
+  border-radius: 2px;
+}
+
+#need-energy {
+  background: #c45a4a;
+}
+
+#need-protein {
+  background: #c49274;
+}
+
+#need-vitamins {
+  background: #6a9a62;
+}
+
 #symptoms:empty,
 #affect:empty,
 #abilities:empty {

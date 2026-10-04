@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { abilityNotes, bloodCard, organClass, organTone, receiptCard, symptomCard, traceSamples, vitalReadout } from "./healthHud";
+import { abilityNotes, bloodCard, needFill, organClass, organTone, receiptCard, symptomCard, traceSamples, vitalReadout } from "./healthHud";
 import { createBlood, createBody, type Body, type Symptom } from "./sim/body";
 
 describe("health hud", () => {
@@ -40,6 +40,13 @@ describe("health hud", () => {
     expect(span(stalled)).toBeLessThan(span(even));
     expect(Math.min(...stalled)).toBeGreaterThan(-0.5);
     expect(Math.max(...traceSamples("heart", 0, 0, 2))).toBeLessThan(0.6);
+  });
+
+  it("fills a body bar up to full and no further", () => {
+    expect(needFill(0)).toBe("0%");
+    expect(needFill(0.3)).toBe("30%");
+    expect(needFill(1)).toBe("100%");
+    expect(needFill(1.2)).toBe("100%");
   });
 
   it("lists symptoms and what is still in the blood", () => {

@@ -12,7 +12,7 @@ import { demixerSpouts, readDemixer } from "./demixer";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
-import { abilityNotes, bloodCard, organClass, organTone, receiptCard, symptomCard, tracePolyline, traceSamples, vitalReadout } from "./healthHud";
+import { abilityNotes, bloodCard, needFill, organClass, organTone, receiptCard, symptomCard, tracePolyline, traceSamples, vitalReadout } from "./healthHud";
 import { createAffect, stepAffect } from "./sim/affect";
 import { createBlood, createBody, pilotOpen, stepBody, swallow, symptomsFrom, type Blood, type OrganName } from "./sim/body";
 import { isAnalog } from "./sim/analogs";
@@ -57,6 +57,9 @@ const traces: Record<OrganName, HTMLElement> = {
   liver: document.getElementById("trace-liver")!,
 };
 const symptoms = document.getElementById("symptoms")!;
+const needEnergy = document.getElementById("need-energy")!;
+const needProtein = document.getElementById("need-protein")!;
+const needVitamins = document.getElementById("need-vitamins")!;
 const bloodReadout = document.getElementById("blood")!;
 const affectReadout = document.getElementById("affect")!;
 const abilities = document.getElementById("abilities")!;
@@ -403,6 +406,9 @@ function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, nutriti
   vitalBreath.textContent = vitals.breath;
   vitalTemp.textContent = vitals.temp;
   vitalClear.textContent = vitals.clear;
+  needEnergy.style.width = needFill(nutrition.energy);
+  needProtein.style.width = needFill(nutrition.protein);
+  needVitamins.style.width = needFill(nutrition.vitamins);
   const symptomHtml = symptomCard([...symptomsFrom(body.organs), ...needSymptoms(nutrition)]);
   if (symptoms.dataset.card !== symptomHtml) {
     symptoms.dataset.card = symptomHtml;
