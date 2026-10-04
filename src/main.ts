@@ -32,6 +32,21 @@ const restart = document.getElementById("restart") as HTMLButtonElement;
 restart.addEventListener("click", () => location.reload());
 bindInput(canvas, prompt);
 
+const hud = document.getElementById("hud")!;
+const hudToggle = document.getElementById("hud-toggle")!;
+const setHudOpen = (open: boolean) => {
+  hud.classList.toggle("collapsed", !open);
+  hudToggle.setAttribute("aria-expanded", String(open));
+};
+hudToggle.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setHudOpen(hud.classList.contains("collapsed"));
+});
+document.addEventListener("keydown", (event) => {
+  if (event.code !== "KeyC" || event.repeat || !input.playing) return;
+  setHudOpen(hud.classList.contains("collapsed"));
+});
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);

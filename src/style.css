@@ -220,14 +220,39 @@ canvas {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 280px;
+  pointer-events: none;
+}
+
+#hud-body {
   padding: 10px 12px;
   background: rgba(8, 10, 12, 0.55);
   color: #e7e4dc;
   border-radius: 6px;
   font-size: 14px;
   line-height: 1.4;
-  pointer-events: none;
+}
+
+#hud.collapsed #hud-body {
+  display: none;
+}
+
+#hud-toggle {
+  pointer-events: auto;
+  width: 36px;
+  height: 36px;
+  padding: 0 0 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-bottom-width: 4px;
+  border-radius: 6px;
+  background: rgba(8, 10, 12, 0.72);
+  color: #e7e4dc;
+  font: 700 15px "Segoe UI", sans-serif;
+  cursor: pointer;
 }
 
 #prompt {
