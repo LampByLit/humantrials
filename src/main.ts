@@ -28,6 +28,7 @@ const prompt = document.getElementById("prompt")!;
 const pourReadout = document.getElementById("pour")!;
 const eyeReadout = document.getElementById("eyed")!;
 const healthReadout = document.getElementById("health")!;
+const veil = document.getElementById("veil")!;
 const restart = document.getElementById("restart") as HTMLButtonElement;
 restart.addEventListener("click", () => location.reload());
 bindInput(canvas, prompt);
@@ -250,17 +251,62 @@ function renderVeil(root: HTMLElement, canvas: HTMLCanvasElement, sense: Sense, 
   const pulse = sense.pulse > 0 ? 0.35 + 0.65 * Math.sin(time * (2.2 + sense.pulse * 1.4)) : 1;
   const wash = Math.min(1, sense.wash * (0.65 + 0.35 * Math.abs(pulse)));
   const [r, g, b] = sense.tint;
-  root.style.opacity = String(Math.min(1, Math.max(wash * 0.85, sense.vignette * 0.5) + beat * sense.pound * 0.22));
-  root.style.background = `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
-  const spread = 50 + sense.vignette * 220;
+  const red = Math.round(r * 255);
+  const green = Math.round(g * 255);
+  const blue = Math.round(b * 255);
+  const spread = 50 + sense.vignette * 220 + sense.drift * 80;
   const rim = Math.round(40 + sense.pound * beat * 180);
-  root.style.boxShadow = `inset 0 0 ${spread}px ${16 + sense.vignette * 120}px rgba(${rim}, 0, 0, ${0.25 + sense.vignette * 0.7})`;
+  root.style.boxShadow = `inset 0 0 ${spread}px ${16 + sense.vignette * 120 + sense.mud * 40}px rgba(${rim}, 0, 0, ${0.25 + sense.vignette * 0.7 + sense.mud * 0.25})`;
+  const trip = sense.trip;
+  const wild = trip > 2.4;
+  if (trip > 0.18) {
+    const spin = (time * (14 + trip * (wild ? 70 : 28))) % 360;
+    const fringe = Math.min(0.9, 0.12 + trip * (wild ? 0.18 : 0.1)).toFixed(2);
+    const wedge = wild ? 7 : 16;
+    const x = 50 + Math.sin(time * (0.7 + trip * 0.5)) * (wild ? 28 : 16);
+    const y = 46 + Math.cos(time * (0.55 + trip * 0.35)) * (wild ? 24 : 14);
+    root.style.mixBlendMode = "screen";
+    root.style.opacity = String(Math.min(wild ? 0.96 : 0.7, 0.22 + trip * (wild ? 0.16 : 0.22)));
+    root.style.filter = wild ? `hue-rotate(${(Math.sin(time * (3 + trip)) * 140).toFixed(0)}deg) saturate(2.4)` : "";
+    const bands = [
+      `radial-gradient(circle at ${x.toFixed(1)}% ${y.toFixed(1)}%, rgba(${red}, ${green}, ${blue}, ${fringe}), transparent ${wild ? 28 : 46}%)`,
+      `radial-gradient(circle at ${(100 - x).toFixed(1)}% ${(100 - y).toFixed(1)}%, rgba(${255 - red}, ${green}, ${255 - blue}, ${(Number(fringe) * 0.8).toFixed(2)}), transparent 40%)`,
+      `repeating-conic-gradient(from ${spin.toFixed(1)}deg at 50% 50%, transparent 0 ${wedge}deg, rgba(${red}, ${255 - green}, ${blue}, ${(Number(fringe) * (wild ? 0.72 : 0.38)).toFixed(2)}) ${wedge}deg ${wedge + (wild ? 3 : 2)}deg)`,
+    ];
+    if (wild) {
+      const spin2 = (time * (40 + trip * 20)) % 360;
+      bands.push(
+        `repeating-conic-gradient(from ${spin2.toFixed(1)}deg at ${x.toFixed(1)}% ${y.toFixed(1)}%, transparent 0 11deg, rgba(${255 - blue}, ${red}, ${255 - green}, 0.45) 11deg 13deg)`,
+      );
+    }
+    root.style.background = bands.join(", ");
+  } else {
+    root.style.mixBlendMode = "multiply";
+    root.style.filter = "";
+    root.style.opacity = String(Math.min(1, Math.max(wash * 0.85, sense.vignette * 0.5) + beat * sense.pound * 0.22));
+    root.style.background = `rgb(${red}, ${green}, ${blue})`;
+  }
+  let contrast = 1;
+  if (sense.pound > 0.2) contrast += beat * sense.pound * 0.35;
+  if (sense.mud > 0.12) contrast += Math.sin(time * 11) * sense.mud * 0.22;
+  if (wild) contrast += 0.35 + Math.sin(time * (4 + trip)) * 0.45;
+  const flash = wild && Math.sin(time * (6 + trip * 0.4)) > 0.94 ? 0.55 : 0;
   const filter = [
     sense.blur > 0.03 ? `blur(${(sense.blur * 3.6).toFixed(2)}px)` : "",
+    trip > 0.12
+      ? `hue-rotate(${(Math.sin(time * (0.6 + trip * (wild ? 2.6 : 1.05))) * trip * (wild ? 95 : 55)).toFixed(1)}deg) saturate(${(1 + Math.min(trip, 4.2) * (wild ? 2.3 : 1.35)).toFixed(2)})`
+      : "",
     sense.pulse > 0.15 ? `hue-rotate(${(Math.sin(time * 2.4) * sense.pulse * 70).toFixed(1)}deg) saturate(${(1 + sense.pulse).toFixed(2)})` : "",
-    sense.pound > 0.2 ? `contrast(${(1 + beat * sense.pound * 0.35).toFixed(2)})` : "",
+    sense.mud > 0.12 ? `grayscale(${(sense.mud * 0.55).toFixed(2)})` : "",
+    flash > 0 ? `invert(${flash.toFixed(2)})` : "",
+    contrast !== 1 ? `contrast(${contrast.toFixed(2)})` : "",
   ].filter(Boolean);
   canvas.style.filter = filter.join(" ");
+  const warpAmp = Math.min(wild ? 0.24 : 0.08, trip * 0.028 + sense.drift * (wild ? 0.08 : 0.04));
+  const warp =
+    Math.sin(time * (0.45 + trip * (wild ? 1.8 : 0.7))) * warpAmp +
+    Math.sin(time * (2.4 + trip)) * (wild ? warpAmp * 0.45 : 0);
+  canvas.style.transform = Math.abs(warp) > 0.002 ? `scale(${(1 + warp).toFixed(4)})` : "";
 }
 
 function renderHealth(root: HTMLElement, body: Body, blood: Blood, symptoms: Symptom[]) {

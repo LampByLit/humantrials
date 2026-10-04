@@ -69,6 +69,36 @@ describe("catalog reactions", () => {
     expect(run("#FF7722")).toBeLessThan(run("#FF9900"));
   });
 
+  it("lets a swallow of a hallucinogen change vision before it threatens the body", () => {
+    const organs = [organ("heart", 0), organ("brain", 90), organ("liver", 200)];
+    const sip = 0.12;
+    const lsd = evaluate(organs, [{ hex: "#FFCC00", mass: sip }]);
+    expect(lsd.organs[1].deflection).toBeGreaterThan(0);
+    expect(lsd.organs[1].deflection).toBeLessThan(config.symptoms.severe);
+    const seen = senseOf(lsd.organs, [{ hex: "#FFCC00", mass: sip }], true);
+    expect(seen.trip).toBeGreaterThan(0.45);
+    expect(seen.spasm).toBeLessThan(0.2);
+    expect(catalogFade("#FFDD33")).toBeGreaterThan(catalogFade("#FFCC00") * 4);
+
+    const dmt = senseOf(organs, [{ hex: "#FFDD33", mass: sip }], true);
+    expect(dmt.trip).toBeGreaterThan(seen.trip);
+    expect(dmt.drift).toBeGreaterThan(seen.drift);
+
+    const ketamine = evaluate(organs, [{ hex: "#7744CC", mass: sip }]);
+    expect(ketamine.organs[1].deflection).toBeLessThan(0);
+    expect(ketamine.organs[1].deflection).toBeGreaterThan(-config.symptoms.severe);
+    const apart = senseOf(ketamine.organs, [{ hex: "#7744CC", mass: sip }], true);
+    expect(apart.drift).toBeGreaterThan(0.35);
+    expect(apart.blur).toBeGreaterThan(0.3);
+    expect(apart.trip).toBe(0);
+    expect(apart.spasm).toBeLessThan(0.2);
+
+    const deliriant = evaluate(organs, [{ hex: "#5C5C8A", mass: sip }]);
+    expect(deliriant.organs[0].deflection).toBeGreaterThan(0);
+    expect(deliriant.organs[1].deflection).toBeLessThan(0);
+    expect(senseOf(deliriant.organs, [{ hex: "#5C5C8A", mass: sip }], true).mud).toBeGreaterThan(0.3);
+  });
+
   it("stops a dead body", () => {
     const body = createBody(1);
     body.alive = false;

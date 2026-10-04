@@ -98,6 +98,9 @@ const steady: Sense = {
   move: 1,
   operate: 1,
   pulse: 0,
+  trip: 0,
+  drift: 0,
+  mud: 0,
 };
 
 export function updatePlayer(
@@ -182,15 +185,31 @@ export function applyFeel(player: Player, sense: Sense) {
   const time = player.clock;
   const beat = Math.sin(time * sense.rate * Math.PI * 2);
   const jolt = sense.spasm > 0.35 && Math.sin(time * 2.6) > 0.9 ? sense.spasm : 0;
+  const slip = sense.mud > 0.2 && Math.sin(time * 1.7) > 0.82 ? sense.mud * 0.02 : 0;
   const shake = sense.shake * 0.034 + sense.spasm * 0.02 + jolt * 0.05;
   player.camera.position.set(
-    Math.sin(time * 23.1) * shake + Math.sin(time * 47) * sense.spasm * 0.028,
+    Math.sin(time * 23.1) * shake + Math.sin(time * 47) * sense.spasm * 0.028 + slip,
     Math.sin(time * 19.4) * shake * 0.85 + beat * sense.pound * 0.022 + jolt * 0.03,
     0,
   );
+  const wild = sense.trip > 2.4;
   player.camera.rotation.z =
-    Math.sin(time * 1.4) * sense.sway * 0.18 + Math.sin(time * 29) * sense.spasm * 0.1 + jolt * 0.2;
-  const fov = REST_FOV + beat * sense.pound * 8 + Math.sin(time * (2 + sense.pulse * 3)) * sense.pulse * 6;
+    Math.sin(time * 1.4) * sense.sway * 0.18 +
+    Math.sin(time * (0.4 + sense.trip * 0.35)) * Math.min(wild ? 0.28 : 0.1, sense.drift * 0.06 + sense.trip * 0.035) +
+    Math.sin(time * 29) * sense.spasm * 0.1 +
+    jolt * 0.2;
+  const fov = Math.min(
+    112,
+    Math.max(
+      40,
+      REST_FOV +
+        beat * sense.pound * 8 +
+        Math.sin(time * (0.45 + sense.trip * (wild ? 1.3 : 0.5))) * Math.min(wild ? 26 : 10, sense.trip * (wild ? 6 : 5)) +
+        Math.sin(time * 0.32) * Math.min(8, sense.drift * 3) -
+        Math.min(wild ? 6 : 10, sense.drift * 2.5) +
+        Math.sin(time * (2 + sense.pulse * 3)) * sense.pulse * 6,
+    ),
+  );
   if (Math.abs(player.camera.fov - fov) > 0.01) {
     player.camera.fov = fov;
     player.camera.updateProjectionMatrix();

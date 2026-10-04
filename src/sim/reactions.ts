@@ -19,6 +19,12 @@ export type Profile = {
   flush: number;
   skin: readonly [number, number, number];
   pulse: number;
+  // Open-eye color hallucination. Surfaces shift hue and pick up fringe color.
+  trip: number;
+  // The room breathes and the field of view narrows. Dissociation, not a convulsion.
+  drift: number;
+  // Anticholinergic delirium: gray, unstable, things slip.
+  mud: number;
 };
 
 export type Sense = {
@@ -36,6 +42,9 @@ export type Sense = {
   move: number;
   operate: number;
   pulse: number;
+  trip: number;
+  drift: number;
+  mud: number;
 };
 
 const BLACK: readonly [number, number, number] = [0, 0, 0];
@@ -67,6 +76,9 @@ function drug(heart: number, brain: number, liver: number, extra: Partial<Profil
     flush: 0,
     skin: BLACK,
     pulse: 0,
+    trip: 0,
+    drift: 0,
+    mud: 0,
     ...extra,
   };
 }
@@ -77,8 +89,28 @@ const profiles: Record<string, Profile> = {
   "#CC00FF": drug(0, -0.15, -1.8, { numb: 1.4, wash: 0.4, tint: [0.55, 0.4, 0.7] }),
   "#6600FF": drug(-3.6, -7.2, -0.4, { blur: 8, slow: 7, numb: 10, sway: 2, wash: 3, tint: OPIOID, flush: 2, skin: PALE }),
   "#FFE8A0": drug(0.35, 0.55, 0, { pound: 0.3, wash: 0.2, tint: WARM }),
-  "#FFCC00": drug(1.4, 3.6, 0, { shake: 2, spasm: 3.5, wash: 4, tint: PSY, pulse: 3.5, flush: 0.8, skin: [0.8, 0.35, 0.7] }),
-  "#FFDD33": drug(1.8, 4.4, 0, { fade: 4, shake: 2.5, spasm: 4, wash: 5, tint: PSY, pulse: 5, flush: 0.6, skin: [0.75, 0.3, 0.85] }),
+  // A swallow is a long color trip with a warm, faster heart. Seizure is an overdose, not the dose.
+  "#FFCC00": drug(0.55, 0.65, 0, {
+    fade: 0.32,
+    shake: 0.35,
+    wash: 1.6,
+    tint: PSY,
+    flush: 0.45,
+    skin: [0.9, 0.5, 0.48],
+    trip: 16,
+    drift: 4,
+  }),
+  // A short blast. The body stays upright; the eyes do not.
+  "#FFDD33": drug(0.45, 0.8, 0, {
+    fade: 2.4,
+    shake: 0.2,
+    wash: 5,
+    tint: PSY,
+    flush: 0.3,
+    skin: [0.86, 0.42, 0.62],
+    trip: 90,
+    drift: 70,
+  }),
   "#FF6600": drug(4.4, 3.8, -0.2, { shake: 4, pound: 4.5, wash: 2, tint: WARM, flush: 3, skin: FLUSH }),
   "#66FF99": drug(0, 0.1, 0.7),
   "#FF66AA": drug(0, 0.15, 0.25),
@@ -94,7 +126,19 @@ const profiles: Record<string, Profile> = {
   "#333366": drug(-1.3, -3.8, -0.4, { blur: 4, slow: 3.5, sway: 1.5, wash: 2, tint: SLEEP, flush: 1, skin: PALE }),
   "#222288": drug(-1.5, -4.2, 0, { blur: 4.5, slow: 4, sway: 2, wash: 2, tint: SLEEP }),
   "#1A1A40": drug(-2.4, -6.8, 0, { blur: 7, slow: 7, numb: 4, wash: 2.5, tint: [0.05, 0.05, 0.12], flush: 1.5, skin: PALE }),
-  "#5C5C8A": drug(-0.4, -2.0, 0, { blur: 2, slow: 1.4, sway: 1, wash: 1, tint: SLEEP }),
+  // Sedating, but the heart runs fast, and a real dose turns the room gray and unsteady.
+  "#5C5C8A": drug(0.8, -1.0, 0, {
+    shake: 0.55,
+    pound: 0.5,
+    sway: 1.8,
+    blur: 2.2,
+    slow: 1,
+    wash: 1.6,
+    tint: [0.42, 0.4, 0.36],
+    flush: 0.35,
+    skin: [0.78, 0.62, 0.55],
+    mud: 10,
+  }),
   "#2A2A55": drug(-0.1, -1.1, 0, { fade: 0.7, blur: 1.2, slow: 0.6, wash: 0.8, tint: [0.15, 0.12, 0.35] }),
   "#FF2200": drug(5.8, 2.2, 0.2, { fade: 2.5, shake: 3, pound: 6, wash: 1.5, tint: BURN, flush: 4, skin: FLUSH }),
   "#FF8844": drug(3.4, 3.0, -0.2, { shake: 2, pound: 3.2, wash: 2.2, tint: [1, 0.35, 0.55], flush: 3, skin: FLUSH, pulse: 1.5 }),
@@ -105,7 +149,18 @@ const profiles: Record<string, Profile> = {
   "#BB66EE": drug(-0.8, -1.9, 0, { blur: 1.6, slow: 1.2, numb: 2, wash: 0.8, tint: OPIOID }),
   "#DD88FF": drug(0, -0.1, -0.25, { numb: 0.8 }),
   "#CC66DD": drug(0, -0.1, -0.2, { numb: 0.7 }),
-  "#7744CC": drug(-0.7, -3.0, 0, { blur: 3, spasm: 1.5, sway: 2.5, slow: 1.5, numb: 2, wash: 2, tint: [0.35, 0.2, 0.7], pulse: 1 }),
+  // Dissociation: numb, unsteady, the room pulls away. Anesthesia if the dose keeps climbing.
+  "#7744CC": drug(-0.35, -1.05, 0, {
+    sway: 4,
+    blur: 4.5,
+    slow: 2,
+    numb: 3.5,
+    wash: 0.8,
+    tint: [0.22, 0.2, 0.32],
+    flush: 0.6,
+    skin: PALE,
+    drift: 12,
+  }),
   "#AA88CC": drug(-0.5, -0.7, 0, { numb: 3.5, wash: 0.4, tint: [0.6, 0.55, 0.7] }),
   "#00CCAA": drug(0.9, 1.8, 0.5, { shake: 1.5, wash: 0.8, tint: [0.2, 0.9, 0.7] }),
   "#00CCCC": drug(-3.0, -0.3, 0, { slow: 0.8, wash: 0.6, tint: [0.2, 0.7, 0.75], flush: 1.5, skin: PALE }),
@@ -173,6 +228,9 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
       move: 0,
       operate: 0,
       pulse: 0,
+      trip: 0,
+      drift: 0,
+      mud: 0,
     };
   }
 
@@ -191,6 +249,9 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   let slow = down(brain) * 1.25 + down(heart) * 0.45;
   let numb = down(brain) * 0.55;
   let pulse = 0;
+  let trip = 0;
+  let drift = 0;
+  let mud = 0;
 
   let tr = 0;
   let tg = 0;
@@ -240,11 +301,16 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
     slow += profile.slow * mass;
     numb += profile.numb * mass;
     pulse = Math.max(pulse, profile.pulse * mass);
+    trip += profile.trip * mass;
+    drift += profile.drift * mass;
+    mud += profile.mud * mass;
     addWash(profile.tint, profile.wash * mass);
     addSkin(profile.skin, profile.flush * mass);
   }
 
   const sat = (value: number) => 1 - Math.exp(-Math.max(0, value));
+  // Psychedelic visuals need headroom. A swallow of DMT approaches the ceiling; LSD stays well under it.
+  const open = (value: number, ceiling: number) => ceiling * (1 - Math.exp(-Math.max(0, value) / ceiling));
   const tint = tw > 0 ? ([tr / tw, tg / tw, tb / tw] as const) : BLACK;
   const skin = sw > 0 ? ([sr / sw, sg / sw, sb / sw] as const) : BLACK;
   const red = 1 - Math.exp(-mph * 40);
@@ -263,5 +329,8 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
     move: 1 - sat(slow),
     operate: 1 - sat(numb),
     pulse,
+    trip: open(trip, 5.5),
+    drift: open(drift, 3),
+    mud: sat(mud),
   };
 }

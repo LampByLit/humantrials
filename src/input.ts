@@ -16,7 +16,7 @@ export const input = {
   ready: false,
   dead: false,
   slow: (): boolean => input.keys.has("ShiftLeft") || input.keys.has("ShiftRight"),
-  run: (): boolean => input.keys.has("ControlLeft") || input.keys.has("ControlRight"),
+  run: (): boolean => input.keys.has("AltLeft") || input.keys.has("AltRight"),
 };
 
 export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
@@ -50,10 +50,19 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
 
   document.addEventListener("contextmenu", (event) => event.preventDefault());
 
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!input.playing) return;
+      if (event.altKey || event.code === "AltLeft" || event.code === "AltRight") event.preventDefault();
+    },
+    true,
+  );
+
   document.addEventListener("keydown", (event) => {
     if (event.code === "Space") event.preventDefault();
     if (!input.playing) return;
-    if (event.ctrlKey || event.code === "ControlLeft" || event.code === "ControlRight") event.preventDefault();
+    if (event.altKey || event.code === "AltLeft" || event.code === "AltRight") event.preventDefault();
     if (event.code === "KeyF" && !event.repeat) input.pairToggle = true;
     if (event.code === "KeyQ" && !event.repeat) input.themeToggle = true;
     input.keys.add(event.code);

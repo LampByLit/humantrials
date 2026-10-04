@@ -467,15 +467,113 @@ function paintReadout(nomen: string, name: string, hex: string) {
   ctx.fillStyle = "#031208";
   ctx.fillRect(0, 0, readout.width, readout.height);
   ctx.fillStyle = "#39ff7a";
-  ctx.textAlign = "left";
+  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = "22px Consolas, monospace";
-  ctx.fillText("> INTAKE", 28, 46);
-  ctx.font = "26px Consolas, monospace";
-  ctx.fillText(`NOMEN  ${nomen}`, 28, 102, 470);
-  ctx.fillText(`NAME   ${name}`, 28, 150, 470);
-  ctx.fillText(`HEX    ${hex}`, 28, 198, 470);
+  ctx.font = "32px Consolas, monospace";
+  ctx.fillText(nomen, 256, 78, 480);
+  ctx.fillText(name, 256, 128, 480);
+  ctx.fillText(hex, 256, 178, 480);
   if (readoutMap) readoutMap.needsUpdate = true;
+}
+
+// The cabinet's front decal is a row of labeled buttons. Paint that strip out and leave lamps.
+function lampsForButtons(root: THREE.Object3D) {
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    const map = material.map;
+    const image = map?.image as HTMLImageElement | undefined;
+    if (!map || !image?.width) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(image, 0, 0);
+    const x = Math.round(image.width * 0.268);
+    const y = Math.round(image.height * 0.358);
+    const w = Math.round(image.width * 0.25);
+    const h = Math.round(image.height * 0.062);
+    ctx.fillStyle = "#1a1e22";
+    ctx.fillRect(x, y, w, h);
+    const glow = document.createElement("canvas");
+    glow.width = canvas.width;
+    glow.height = canvas.height;
+    const lights = glow.getContext("2d")!;
+    lights.fillStyle = "#000";
+    lights.fillRect(0, 0, glow.width, glow.height);
+    const colors = ["#39ff7a", "#ffcc33", "#ff5544", "#66ddff", "#d090ff"];
+    colors.forEach((color, index) => {
+      const cx = x + 28 + index * ((w - 56) / (colors.length - 1));
+      const cy = y + h / 2;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+      ctx.fill();
+      lights.fillStyle = color;
+      lights.beginPath();
+      lights.arc(cx, cy, 9, 0, Math.PI * 2);
+      lights.fill();
+    });
+    const next = new THREE.CanvasTexture(canvas);
+    next.colorSpace = THREE.SRGBColorSpace;
+    next.flipY = map.flipY;
+    next.wrapS = map.wrapS;
+    next.wrapT = map.wrapT;
+    const emissive = new THREE.CanvasTexture(glow);
+    emissive.colorSpace = THREE.SRGBColorSpace;
+    emissive.flipY = map.flipY;
+    material.map = next;
+    material.emissiveMap = emissive;
+    material.emissive = new THREE.Color(0xffffff);
+    material.emissiveIntensity = 1;
+    material.needsUpdate = true;
+  });
+}
+
+function faceBox(root: THREE.Object3D, direction: THREE.Vector3) {
+  const point = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  let best = -Infinity;
+  const consider = (keep: (dot: number) => boolean, box?: THREE.Box3) => {
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const position = mesh.geometry.getAttribute("position");
+      const normals = mesh.geometry.getAttribute("normal");
+      if (!position || !normals) return;
+      for (let i = 0; i < position.count; i++) {
+        normal.fromBufferAttribute(normals, i).transformDirection(mesh.matrixWorld);
+        if (normal.dot(direction) < 0.75) continue;
+        point.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        const dot = point.dot(direction);
+        if (!keep(dot)) continue;
+        if (box) box.expandByPoint(point);
+        else if (dot > best) best = dot;
+      }
+    });
+  };
+  consider(() => true);
+  const box = new THREE.Box3();
+  consider((dot) => dot > best - 0.03, box);
+  return box;
+}
+
+function addScreen(parent: THREE.Scene, box: THREE.Box3, direction: THREE.Vector3, map: THREE.Texture) {
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const width = direction.x !== 0 ? size.z : size.x;
+  const height = size.y;
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.min(width * 0.72, 0.42), Math.min(height * 0.28, 0.24)),
+    new THREE.MeshBasicMaterial({ map }),
+  );
+  screen.position.copy(center).addScaledVector(direction, 0.012);
+  screen.lookAt(center.clone().add(direction));
+  screen.renderOrder = 2;
+  parent.add(screen);
 }
 
 // Empties the well after copying the pour onto the screen, so the next pour replaces it.
@@ -507,6 +605,7 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
     mesh.receiveShadow = true;
   });
   scene.add(model);
+  lampsForButtons(model);
 
   const fitted = new THREE.Box3().setFromObject(model);
   const top = fitted.max.y;
@@ -539,7 +638,7 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   const vessel = addVessel(
     scene,
     world,
-    { size: { radius: 0.042, height: 0.08, density: 1 }, fill: 0, fixed: true, y: top - 0.03 },
+    { size: { radius: 0.06, height: 0.1, density: 1 }, fill: 0, fixed: true, y: top - 0.04 },
     cx,
     cz,
     1,
@@ -561,13 +660,10 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   paintReadout("—", "—", "—");
   readoutMap = new THREE.CanvasTexture(readout);
   readoutMap.colorSpace = THREE.SRGBColorSpace;
-  const screen = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.34, 0.17),
-    new THREE.MeshBasicMaterial({ map: readoutMap }),
-  );
-  screen.position.set(fitted.min.x - 0.01, top * 0.62, cz);
-  screen.rotation.y = -Math.PI / 2;
-  scene.add(screen);
+  const towardAisle = new THREE.Vector3(-1, 0, 0);
+  const side = new THREE.Vector3(0, 0, 1);
+  addScreen(scene, faceBox(model, towardAisle), towardAisle, readoutMap);
+  addScreen(scene, faceBox(model, side), side, readoutMap);
 }
 
 const invisible = new THREE.MeshStandardMaterial();
