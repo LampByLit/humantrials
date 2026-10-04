@@ -137,6 +137,21 @@ export function catalogFade(hex: string): number {
   return profileOf(hex)?.fade ?? 1;
 }
 
+export const MILK_HEX = "#FFFFFF";
+// Aflatoxin and strychnine are not the sort of poisoning milk can wash out.
+const BEYOND_MILK = new Set(["#665522", "#AAFF00"]);
+
+// 1 is no milk. A swallowed sip pulls this toward 0 and dulls most other drives.
+export function milkScale(doses: readonly { hex: string; mass: number }[]): number {
+  let mass = 0;
+  for (const dose of doses) if (dose.hex.toUpperCase() === MILK_HEX) mass += dose.mass;
+  return Math.exp(-mass * 22);
+}
+
+export function milkReaches(hex: string): boolean {
+  return !BEYOND_MILK.has(hex.toUpperCase());
+}
+
 export const catalogHexes = Object.keys(profiles);
 
 type Reading = { name: string; deflection: number };
@@ -208,6 +223,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   addSkin(JAUNDICE, down(liver) * 1.3);
 
   let mph = 0;
+  const softened = milkScale(doses);
   for (const dose of doses) {
     if (dose.hex.toUpperCase() === "#C93F38") {
       mph += dose.mass;
@@ -215,7 +231,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
     }
     const profile = profileOf(dose.hex);
     if (!profile || dose.mass <= 0) continue;
-    const mass = dose.mass;
+    const mass = dose.mass * (milkReaches(dose.hex) ? softened : 1);
     shake += profile.shake * mass;
     spasm += profile.spasm * mass;
     pound += profile.pound * mass;

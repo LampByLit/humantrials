@@ -2,7 +2,7 @@ import { analyzeBalance } from "./balance";
 import { derive, draw, type Solution } from "./compound";
 import { config } from "./config";
 import { drive, noise } from "./effect";
-import { catalogDrive, catalogFade } from "./reactions";
+import { catalogDrive, catalogFade, milkReaches, milkScale } from "./reactions";
 import { createRng } from "./rng";
 
 export const organNames = ["heart", "brain", "liver"] as const;
@@ -215,12 +215,15 @@ function clearanceRate(liver: Organ | undefined) {
 }
 
 export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { organs: Organ[]; symptoms: Symptom[] } {
+  const softened = milkScale(doses);
   const next = organs.map((organ) => {
     let totalDrive = organ.side;
     for (const dose of doses) {
-      if (dose.hex.toUpperCase() === MPH_HEX) continue;
+      if (dose.hex.toUpperCase() === MPH_HEX || dose.hex.toUpperCase() === "#FFFFFF") continue;
       const known = catalogDrive(dose.hex, organ.name);
-      totalDrive += known === null ? drive(derive(dose.hex), organ, dose.mass) : known * dose.mass;
+      let amount = known === null ? drive(derive(dose.hex), organ, dose.mass) : known * dose.mass;
+      if (milkReaches(dose.hex)) amount *= softened;
+      totalDrive += amount;
     }
     totalDrive *= sensitivity(organ.integrity);
     const deflection = Math.tanh((totalDrive - organ.adaptation) / config.deflectionScale);

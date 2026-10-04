@@ -36,6 +36,21 @@ function living(organs: Organ[], seed = 1): Body {
 }
 
 describe("body", () => {
+  it("lets milk blunt most poisoning and leave aflatoxin alone", () => {
+    const heart = organ("heart", 0);
+    const liver = organ("liver", 240);
+    const caffeine = [{ hex: "#FF9900", mass: 0.2 }];
+    const withMilk = [...caffeine, { hex: "#FFFFFF", mass: 0.3 }];
+    const poisoned = evaluate([heart], caffeine);
+    const treated = evaluate([heart], withMilk);
+    expect(Math.abs(treated.organs[0].deflection)).toBeLessThan(Math.abs(poisoned.organs[0].deflection) * 0.35);
+
+    const toxin = [{ hex: "#665522", mass: 0.2 }];
+    const bare = evaluate([liver], toxin);
+    const covered = evaluate([liver], [...toxin, { hex: "#FFFFFF", mass: 0.3 }]);
+    expect(covered.organs[0].deflection).toBeCloseTo(bare.organs[0].deflection, 5);
+  });
+
   it("reproduces receptors and deflections from the same seed", () => {
     const doses = [{ hex: "#FF0000", mass: 1 }];
     const first = createBody(42);

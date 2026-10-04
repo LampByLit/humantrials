@@ -1,5 +1,5 @@
 [
-  { "id": "milk", "name": "Milk", "hex": "#FFFFFF", "latin": "albus vanus", "note": "inert white; opaque only because it is cloudy" },
+  { "id": "milk", "name": "Milk", "hex": "#FFFFFF", "latin": "albus vanus", "note": "general antidote for most poisoning; not aflatoxin or strychnine" },
   { "id": "caffeine", "name": "Caffeine", "hex": "#FF9900", "latin": "albus merus aurantius", "note": "alert, pounding heart" },
   { "id": "acetaminophen", "name": "Acetaminophen", "hex": "#CC00FF", "latin": "albus merus purpureus", "note": "numbing; heavy doses slow the liver" },
   { "id": "fentanyl", "name": "Fentanyl", "hex": "#6600FF", "latin": "albus merus violaceus", "note": "sleep, slow heart, strong numbing" },

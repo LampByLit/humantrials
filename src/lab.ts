@@ -157,7 +157,14 @@ const BENCHES: Bench[] = [
     x: 7.5,
     z: 2,
     facing: -1,
-    items: [{ size: MEDIUM, hex: 0xc93f38, fill: 0.85, exact: true }],
+    items: [
+      { size: MEDIUM, hex: 0xc93f38, fill: 0.85, exact: true },
+      { size: MEDIUM, hex: 0xffffff, fill: 0.8 },
+      { size: LARGE, hex: 0xffffff, fill: 0.75 },
+      { size: MEDIUM, hex: 0xffffff, fill: 0.8 },
+      { size: LARGE, hex: 0xffffff, fill: 0.75 },
+      { size: MEDIUM, hex: 0xffffff, fill: 0.8 },
+    ],
   },
 ];
 
