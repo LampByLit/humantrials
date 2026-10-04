@@ -117,12 +117,20 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
   ]);
 
   const paint = whiteSurface(0.92);
+  const plaster = whiteSurface(0.94);
   for (const model of [floor, wall, windowWall, shelf, extinguisher, chair]) {
     model.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (mesh.isMesh) mesh.material = paint;
     });
   }
+  // The exit model brings its own photo wall and window. Paint those panels to match the room.
+  exitWall.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const name = `${mesh.parent?.name ?? ""} ${mesh.name}`.toLowerCase();
+    if (name.includes("wall") || name.includes("window")) mesh.material = plaster;
+  });
 
   const slots = (half: number) => {
     const out: number[] = [];
@@ -151,7 +159,6 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
     addModule(scene, windowWall, -WALL_X, z, Math.PI / 2);
   }
 
-  const plaster = whiteSurface(0.94);
   const band = (width: number, height: number, depth: number, x: number, y: number, z: number) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), plaster);
     mesh.position.set(x, y, z);
