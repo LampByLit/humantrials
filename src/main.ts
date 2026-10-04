@@ -406,9 +406,9 @@ function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, nutriti
   vitalBreath.textContent = vitals.breath;
   vitalTemp.textContent = vitals.temp;
   vitalClear.textContent = vitals.clear;
-  needEnergy.style.width = needFill(nutrition.energy);
-  needProtein.style.width = needFill(nutrition.protein);
-  needVitamins.style.width = needFill(nutrition.vitamins);
+  needEnergy.style.setProperty("--fill", needFill(nutrition.energy));
+  needProtein.style.setProperty("--fill", needFill(nutrition.protein));
+  needVitamins.style.setProperty("--fill", needFill(nutrition.vitamins));
   const symptomHtml = symptomCard([...symptomsFrom(body.organs), ...needSymptoms(nutrition)]);
   if (symptoms.dataset.card !== symptomHtml) {
     symptoms.dataset.card = symptomHtml;
