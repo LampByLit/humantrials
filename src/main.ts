@@ -90,8 +90,10 @@ document.addEventListener("keydown", (event) => {
   if (event.code === "KeyH") setHealthOpen(health.classList.contains("collapsed"));
 });
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const pixelRatio = Math.min(window.devicePixelRatio, 2);
+// At high pixel density the extra pixels already smooth edges, so MSAA mostly doubles the fill cost.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: pixelRatio < 1.5, powerPreference: "high-performance" });
+renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -123,6 +125,9 @@ sun.shadow.camera.left = -14;
 sun.shadow.camera.right = 14;
 sun.shadow.camera.top = 14;
 sun.shadow.camera.bottom = -14;
+// The room is static; the map is redrawn only when glass that casts moves or starts or stops casting.
+sun.shadow.autoUpdate = false;
+sun.shadow.needsUpdate = true;
 scene.add(sun);
 applyTheme(false, { scene, hemi, sun });
 
@@ -212,9 +217,10 @@ function frame(now: number) {
   driveLeftHand(hands, beakers, dt);
   updateHold(hold, hands, beakers, world, dt);
   const carried = hold.grips.map((grip) => grip.beaker);
-  containVessels(beakers, world, carried);
+  const castBefore = containVessels(beakers, world, carried);
   world.step();
-  containVessels(beakers, world, carried);
+  const castAfter = containVessels(beakers, world, carried);
+  if (castBefore || castAfter) sun.shadow.needsUpdate = true;
   followLeftHand(hands, beakers, world);
   syncBeakers(beakers);
   updateHandShadow(handShadow, hands);
@@ -369,6 +375,7 @@ function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, rate: n
     }
     return;
   }
+  if (health.classList.contains("collapsed")) return;
   const heart = body.organs.find((organ) => organ.name === "heart")!;
   const brain = body.organs.find((organ) => organ.name === "brain")!;
   const liver = body.organs.find((organ) => organ.name === "liver")!;

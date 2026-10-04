@@ -14,7 +14,7 @@ const RING_SEGMENTS = 7;
 const MOUTH_SCALE = 0.9;
 const RAY_GROUPS = ((0x0002 | 0x0008) << 16) | 0xffff;
 // Light through a dye falls off with concentration (Beer-Lambert): a stock shows its hex,
-// diluting fades it toward clear water, and cloud makes it opaque.
+// diluting fades it toward clear water, and cloud scatters it back toward opaque white.
 const WATER_TINT = new THREE.Color().setRGB(0.82, 0.9, 0.95, THREE.SRGBColorSpace);
 const WHITE = new THREE.Color(1, 1, 1);
 const WATER_ALPHA = 0.16;
@@ -63,6 +63,7 @@ type Vessel = Stream & {
   beaker: Beaker;
   surfaceUp: THREE.Vector3;
   plane: THREE.Plane;
+  body: THREE.Mesh;
   bodyMat: THREE.MeshStandardMaterial;
   cap: THREE.Mesh;
   capMat: THREE.ShaderMaterial;
@@ -324,7 +325,6 @@ function createVessel(
   });
   const cap = new THREE.Mesh(circle, capMat);
   cap.name = "liquid-surface";
-  cap.frustumCulled = false;
   cap.renderOrder = 2;
   cap.scale.setScalar(0.3);
   scene.add(cap);
@@ -334,6 +334,7 @@ function createVessel(
     beaker,
     surfaceUp: new THREE.Vector3(0, 1, 0),
     plane,
+    body,
     bodyMat,
     cap,
     capMat,
@@ -393,7 +394,8 @@ function shade(liquid: Solution, out: THREE.Color): number {
   const absorb = 1 - Math.min(r, g, b);
   const cloud = volume > 1e-9 ? 1 - Math.exp((-CLOUD_DENSITY * liquid.cloud) / volume) : 0;
   hexColor.setRGB(r, g, b, THREE.SRGBColorSpace);
-  out.copy(WATER_TINT).lerp(WHITE, Math.max(absorb, cloud)).multiply(hexColor);
+  out.copy(WATER_TINT).lerp(WHITE, absorb).multiply(hexColor);
+  out.lerp(WHITE, cloud);
   const clear = (1 - WATER_ALPHA) * (1 - DYE_ALPHA * Math.pow(absorb, 0.7)) * (1 - cloud);
   return Math.min(MAX_ALPHA, 1 - clear);
 }
@@ -1255,8 +1257,7 @@ function updateVesselVisual(vessel: Vessel) {
   const up = localUpOf(vessel, rotation, localUp);
   const surface = solveSurface(up, beaker.solution.volume, beaker.radius, beaker.height / 2);
   const visible = beaker.solution.volume > 1e-6;
-  const liquid = beaker.mesh.getObjectByName("liquid");
-  if (liquid) liquid.visible = visible;
+  vessel.body.visible = visible;
   vessel.cap.visible = visible;
   const alpha = shade(beaker.solution, color);
   // Clear liquid must not hide the glass behind it.

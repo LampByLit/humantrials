@@ -312,7 +312,7 @@ export function addBox(
   );
 }
 
-const glass = new THREE.MeshPhysicalMaterial({
+const glass = new THREE.MeshStandardMaterial({
   color: 0xdfe7ea,
   transparent: true,
   opacity: 0.28,
@@ -647,9 +647,11 @@ function dropNest(world: RAPIER.World, index: number) {
 }
 
 const casting = new Set<Beaker>();
+let castChanged = false;
 
 function setCast(beaker: Beaker, on: boolean) {
   if (on === casting.has(beaker)) return;
+  castChanged = true;
   if (on) casting.add(beaker);
   else casting.delete(beaker);
   beaker.mesh.traverse((object) => {
@@ -660,7 +662,9 @@ function setCast(beaker: Beaker, on: boolean) {
 
 // A smaller vessel that has settled inside a larger one is welded there, so lifting
 // the outer one cannot leave it behind to fall through the floor.
-export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Beaker[]) {
+// Returns true when the sun's shadow map is stale: glass that casts has moved or
+// started or stopped casting.
+export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Beaker[]): boolean {
   const carried = new Set(held);
   for (let i = nests.length - 1; i >= 0; i--) {
     const nest = nests[i];
@@ -688,6 +692,11 @@ export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Bea
   const onWeld = new Set<Beaker>(held);
   for (const nest of nests) onWeld.add(nest.inner);
   for (const beaker of beakers) setCast(beaker, onWeld.has(beaker));
+  const changed = castChanged;
+  castChanged = false;
+  if (changed) return true;
+  for (const beaker of casting) if (!beaker.body.isSleeping()) return true;
+  return false;
 }
 
 export let intake: Beaker | null = null;
