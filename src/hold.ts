@@ -230,18 +230,22 @@ function separation(grip: Grip) {
 function sideForce(world: RAPIER.World, grip: Grip) {
   let impulse = 0;
   const hand = grip.arm.body.handle;
-  world.contactPairsWith(grip.beaker.collider, (other) => {
-    const parent = other.parent();
-    if (parent && parent.handle === hand) return;
-    world.contactPair(grip.beaker.collider, other, (manifold, flipped) => {
-      const normal = manifold.normal();
-      const ny = flipped ? -normal.y : normal.y;
-      // Vertical contacts are the bench or the floor holding the glass up.
-      if (Math.abs(ny) > SUPPORT_NORMAL) return;
-      const count = manifold.numContacts();
-      for (let i = 0; i < count; i++) impulse += manifold.contactImpulse(i);
+  const body = grip.beaker.body;
+  for (let c = 0; c < body.numColliders(); c++) {
+    const collider = body.collider(c);
+    world.contactPairsWith(collider, (other) => {
+      const parent = other.parent();
+      if (parent && parent.handle === hand) return;
+      world.contactPair(collider, other, (manifold, flipped) => {
+        const normal = manifold.normal();
+        const ny = flipped ? -normal.y : normal.y;
+        // Vertical contacts are the bench or the floor holding the glass up.
+        if (Math.abs(ny) > SUPPORT_NORMAL) return;
+        const count = manifold.numContacts();
+        for (let i = 0; i < count; i++) impulse += manifold.contactImpulse(i);
+      });
     });
-  });
+  }
   return impulse;
 }
 

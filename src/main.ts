@@ -7,7 +7,8 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createHands, driveLeftHand, followLeftHand, settleHand, tintSkin, updateHands, type Hands } from "./hands";
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
-import { createLab, readIntake, syncBeakers, type Beaker } from "./lab";
+import { containVessels, createLab, readIntake, syncBeakers, type Beaker } from "./lab";
+import { readMixer } from "./mixer";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
@@ -66,17 +67,26 @@ bindInput(canvas, prompt);
 
 const hud = document.getElementById("hud")!;
 const hudToggle = document.getElementById("hud-toggle")!;
-const setHudOpen = (open: boolean) => {
-  hud.classList.toggle("collapsed", !open);
-  hudToggle.setAttribute("aria-expanded", String(open));
+const health = document.getElementById("health")!;
+const healthToggle = document.getElementById("health-toggle")!;
+const setPanelOpen = (panel: HTMLElement, toggle: HTMLElement, open: boolean) => {
+  panel.classList.toggle("collapsed", !open);
+  toggle.setAttribute("aria-expanded", String(open));
 };
+const setHudOpen = (open: boolean) => setPanelOpen(hud, hudToggle, open);
+const setHealthOpen = (open: boolean) => setPanelOpen(health, healthToggle, open);
 hudToggle.addEventListener("click", (event) => {
   event.stopPropagation();
   setHudOpen(hud.classList.contains("collapsed"));
 });
+healthToggle.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setHealthOpen(health.classList.contains("collapsed"));
+});
 document.addEventListener("keydown", (event) => {
-  if (event.code !== "KeyC" || event.repeat || !input.playing) return;
-  setHudOpen(hud.classList.contains("collapsed"));
+  if (event.repeat || !input.playing) return;
+  if (event.code === "KeyC") setHudOpen(hud.classList.contains("collapsed"));
+  if (event.code === "KeyH") setHealthOpen(health.classList.contains("collapsed"));
 });
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -94,6 +104,9 @@ const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerH
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.integrationParameters.numSolverIterations = 16;
+// Default contact prediction is 2cm, which is enough to seat a beaker on the rim of the
+// next size up. A couple of millimetres still holds glass on the bench and lets it drop in.
+world.integrationParameters.normalizedPredictionDistance = 0.002;
 
 // The hand light in handShadow.ts supplies the rest of the light on upward surfaces,
 // and is the only light the hand blocks, so its shadow stays readable.
@@ -105,10 +118,10 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 0.5;
 sun.shadow.camera.far = 20;
-sun.shadow.camera.left = -10;
-sun.shadow.camera.right = 10;
-sun.shadow.camera.top = 10;
-sun.shadow.camera.bottom = -10;
+sun.shadow.camera.left = -14;
+sun.shadow.camera.right = 14;
+sun.shadow.camera.top = 14;
+sun.shadow.camera.bottom = -14;
 scene.add(sun);
 applyTheme(false, { scene, hemi, sun });
 
@@ -197,7 +210,10 @@ function frame(now: number) {
   settleHand(hands, world);
   driveLeftHand(hands, beakers, dt);
   updateHold(hold, hands, beakers, world, dt);
+  const carried = hold.grips.map((grip) => grip.beaker);
+  containVessels(beakers, world, carried);
   world.step();
+  containVessels(beakers, world, carried);
   followLeftHand(hands, beakers, world);
   syncBeakers(beakers);
   updateHandShadow(handShadow, hands);
@@ -205,6 +221,7 @@ function frame(now: number) {
   const drinker = body.alive && player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);
   readIntake();
+  readMixer();
   showEyes(eyeReadout, camera, hands, beakers, blood);
   if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
   stepBody(body, blood, dt);

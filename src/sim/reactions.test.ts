@@ -99,6 +99,37 @@ describe("catalog reactions", () => {
     expect(senseOf(deliriant.organs, [{ hex: "#5C5C8A", mass: sip }], true).mud).toBeGreaterThan(0.3);
   });
 
+  it("survives any amount of the harmless substances", () => {
+    for (const hex of ["#2A2A55", "#00CCAA", "#FFE8A0", "#FFDD33", "#FFBB44"]) {
+      const body = {
+        organs: [organ("heart", 0), organ("brain", 120), organ("liver", 240)],
+        alive: true,
+        critical: 0,
+        cause: null,
+        rng: createRng(3),
+      };
+      const blood = createBlood();
+      blood.doses.push({ hex, mass: 5 });
+      for (let i = 0; i < 600; i++) stepBody(body, blood, 0.1);
+      expect(body.alive).toBe(true);
+      expect(body.organs[0].integrity).toBe(1);
+      expect(body.organs[1].integrity).toBe(1);
+    }
+  });
+
+  it("lets naloxone undo fentanyl and nothing else", () => {
+    const organs = [organ("heart", 0), organ("brain", 90), organ("liver", 200)];
+    const fentanyl = { hex: "#6600FF", mass: 0.15 };
+    const naloxone = { hex: "#00CCAA", mass: 0.12 };
+    const reversed = evaluate(organs, [fentanyl, naloxone]);
+    expect(reversed.organs[1].deflection).toBeGreaterThan(-config.symptoms.mild);
+    const caffeine = { hex: "#FF9900", mass: 0.2 };
+    const alone = evaluate(organs, [caffeine]);
+    const covered = evaluate(organs, [caffeine, naloxone]);
+    expect(covered.organs[0].deflection).toBeCloseTo(alone.organs[0].deflection, 8);
+    expect(evaluate(organs, [naloxone]).organs.every((item) => item.deflection === 0)).toBe(true);
+  });
+
   it("stops a dead body", () => {
     const body = createBody(1);
     body.alive = false;

@@ -25,6 +25,8 @@ export type Profile = {
   drift: number;
   // Anticholinergic delirium: gray, unstable, things slip.
   mud: number;
+  // Most drive the substance can add to any one organ, however much is in the blood.
+  ceiling: number;
 };
 
 export type Sense = {
@@ -79,16 +81,21 @@ function drug(heart: number, brain: number, liver: number, extra: Partial<Profil
     trip: 0,
     drift: 0,
     mud: 0,
+    ceiling: Infinity,
     ...extra,
   };
 }
+
+// Substances with no real lethal dose. At this ceiling an organ tops out in the moderate band,
+// with room for a random side effect on top before anything turns critical.
+const HARMLESS = 0.25;
 
 const profiles: Record<string, Profile> = {
   "#FFFFFF": drug(0, 0, 0),
   "#FF9900": drug(2.4, 2.2, 0.3, { shake: 2.2, pound: 2.4, wash: 1.2, tint: WARM, flush: 1.6, skin: FLUSH }),
   "#CC00FF": drug(0, -0.15, -1.8, { numb: 1.4, wash: 0.4, tint: [0.55, 0.4, 0.7] }),
   "#6600FF": drug(-3.6, -7.2, -0.4, { blur: 8, slow: 7, numb: 10, sway: 2, wash: 3, tint: OPIOID, flush: 2, skin: PALE }),
-  "#FFE8A0": drug(0.35, 0.55, 0, { pound: 0.3, wash: 0.2, tint: WARM }),
+  "#FFE8A0": drug(0.35, 0.55, 0, { pound: 0.3, wash: 0.2, tint: WARM, ceiling: HARMLESS }),
   // A swallow is a long color trip with a warm, faster heart. Seizure is an overdose, not the dose.
   "#FFCC00": drug(0.55, 0.65, 0, {
     fade: 0.32,
@@ -110,6 +117,7 @@ const profiles: Record<string, Profile> = {
     skin: [0.86, 0.42, 0.62],
     trip: 90,
     drift: 70,
+    ceiling: HARMLESS,
   }),
   "#FF6600": drug(4.4, 3.8, -0.2, { shake: 4, pound: 4.5, wash: 2, tint: WARM, flush: 3, skin: FLUSH }),
   "#66FF99": drug(0, 0.1, 0.7),
@@ -119,7 +127,7 @@ const profiles: Record<string, Profile> = {
   "#FF4400": drug(3.6, 4.4, -0.3, { shake: 4.5, spasm: 1.5, pound: 3, wash: 1.8, tint: WARM, flush: 2.4, skin: FLUSH }),
   "#FF7722": drug(1.8, 2.8, 0, { fade: 3.5, shake: 2.4, pound: 1.6, wash: 0.8, tint: WARM }),
   "#FFAA22": drug(1.4, 2.6, 0, { shake: 1.6, pound: 0.8, wash: 0.6, tint: WARM }),
-  "#FFBB44": drug(0.4, 2.2, 0.3, { shake: 0.6, wash: 0.3, tint: [1, 0.85, 0.4] }),
+  "#FFBB44": drug(0.4, 2.2, 0.3, { shake: 0.6, wash: 0.3, tint: [1, 0.85, 0.4], ceiling: HARMLESS }),
   "#E8A060": drug(1.2, 1.0, 0.2, { pound: 0.8, wash: 0.4, tint: WARM }),
   "#4466CC": drug(-0.7, -2.4, -0.9, { sway: 4, blur: 3, slow: 2.2, wash: 1.6, tint: SLEEP, flush: 1.2, skin: [0.8, 0.45, 0.45] }),
   "#5544AA": drug(-0.3, -2.6, 0, { blur: 2.4, slow: 1.6, sway: 1.2, numb: 1.2, wash: 1.4, tint: SLEEP }),
@@ -139,7 +147,7 @@ const profiles: Record<string, Profile> = {
     skin: [0.78, 0.62, 0.55],
     mud: 10,
   }),
-  "#2A2A55": drug(-0.1, -1.1, 0, { fade: 0.7, blur: 1.2, slow: 0.6, wash: 0.8, tint: [0.15, 0.12, 0.35] }),
+  "#2A2A55": drug(-0.1, -1.1, 0, { fade: 0.7, blur: 1.2, slow: 0.6, wash: 0.8, tint: [0.15, 0.12, 0.35], ceiling: HARMLESS }),
   "#FF2200": drug(5.8, 2.2, 0.2, { fade: 2.5, shake: 3, pound: 6, wash: 1.5, tint: BURN, flush: 4, skin: FLUSH }),
   "#FF8844": drug(3.4, 3.0, -0.2, { shake: 2, pound: 3.2, wash: 2.2, tint: [1, 0.35, 0.55], flush: 3, skin: FLUSH, pulse: 1.5 }),
   "#FF7744": drug(2.2, 0.9, 0, { pound: 1.6, flush: 1.2, skin: FLUSH }),
@@ -162,7 +170,8 @@ const profiles: Record<string, Profile> = {
     drift: 12,
   }),
   "#AA88CC": drug(-0.5, -0.7, 0, { numb: 3.5, wash: 0.4, tint: [0.6, 0.55, 0.7] }),
-  "#00CCAA": drug(0.9, 1.8, 0.5, { shake: 1.5, wash: 0.8, tint: [0.2, 0.9, 0.7] }),
+  // Does nothing on its own. It works through blockScale, by knocking opioids off their receptors.
+  "#00CCAA": drug(0, 0, 0, { wash: 0.3, tint: [0.2, 0.9, 0.7] }),
   "#00CCCC": drug(-3.0, -0.3, 0, { slow: 0.8, wash: 0.6, tint: [0.2, 0.7, 0.75], flush: 1.5, skin: PALE }),
   "#008888": drug(-2.4, -1.3, 0, { slow: 1.2, blur: 0.8, flush: 1.2, skin: PALE }),
   "#00AA66": drug(0.5, -0.5, 0.2, { sway: 3.5, wash: 2.5, tint: SICK, flush: 1.5, skin: [0.65, 0.75, 0.4] }),
@@ -190,6 +199,28 @@ export function catalogDrive(hex: string, organ: "heart" | "brain" | "liver"): n
 
 export function catalogFade(hex: string): number {
   return profileOf(hex)?.fade ?? 1;
+}
+
+export function catalogCeiling(hex: string): number {
+  return profileOf(hex)?.ceiling ?? Infinity;
+}
+
+export function capDrive(amount: number, ceiling: number): number {
+  return Math.sign(amount) * Math.min(Math.abs(amount), ceiling);
+}
+
+const NALOXONE_HEX = "#00CCAA";
+const OPIOIDS = new Set(["#6600FF", "#9900CC", "#8800BB", "#AA22DD", "#BB66EE"]);
+
+// 1 is no naloxone. A sip cuts a sip of fentanyl to about a fifth.
+export function blockScale(doses: readonly { hex: string; mass: number }[]): number {
+  let mass = 0;
+  for (const dose of doses) if (dose.hex.toUpperCase() === NALOXONE_HEX) mass += dose.mass;
+  return Math.exp(-mass * 25);
+}
+
+export function isOpioid(hex: string): boolean {
+  return OPIOIDS.has(hex.toUpperCase());
 }
 
 export const MILK_HEX = "#FFFFFF";
@@ -285,6 +316,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
 
   let mph = 0;
   const softened = milkScale(doses);
+  const blocked = blockScale(doses);
   for (const dose of doses) {
     if (dose.hex.toUpperCase() === "#C93F38") {
       mph += dose.mass;
@@ -292,7 +324,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
     }
     const profile = profileOf(dose.hex);
     if (!profile || dose.mass <= 0) continue;
-    const mass = dose.mass * (milkReaches(dose.hex) ? softened : 1);
+    const mass = dose.mass * (milkReaches(dose.hex) ? softened : 1) * (isOpioid(dose.hex) ? blocked : 1);
     shake += profile.shake * mass;
     spasm += profile.spasm * mass;
     pound += profile.pound * mass;

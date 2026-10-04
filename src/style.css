@@ -96,6 +96,14 @@ canvas {
   bottom: 16px;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+#health-body {
+  display: flex;
+  flex-direction: column;
   gap: 9px;
   width: 336px;
   padding: 12px 14px 11px;
@@ -103,7 +111,10 @@ canvas {
   color: #e7e4dc;
   border: 1px solid rgba(231, 228, 220, 0.14);
   border-radius: 8px;
-  pointer-events: none;
+}
+
+#health.collapsed #health-body {
+  display: none;
 }
 
 body.dead #health {
@@ -415,7 +426,8 @@ body.dead #health {
   display: none;
 }
 
-#hud-toggle {
+#hud-toggle,
+#health-toggle {
   pointer-events: auto;
   width: 36px;
   height: 36px;

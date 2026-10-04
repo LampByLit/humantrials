@@ -34,7 +34,7 @@
   { "id": "ibuprofen", "name": "Ibuprofen", "hex": "#CC66DD", "latin": "pallidus spurius purpureus", "note": "mild numbing" },
   { "id": "ketamine", "name": "Ketamine", "hex": "#7744CC", "latin": "pallidus merus violaceus", "note": "numb, unsteady, the room pulls away; coma if you push it" },
   { "id": "lidocaine", "name": "Lidocaine", "hex": "#AA88CC", "latin": "pallidus spurius violaceus", "note": "local numbing, muddy" },
-  { "id": "naloxone", "name": "Naloxone", "hex": "#00CCAA", "latin": "pallidus merus cyaneus", "note": "opioid antidote; pulls the opposite way" },
+  { "id": "naloxone", "name": "Naloxone", "hex": "#00CCAA", "latin": "pallidus merus cyaneus", "note": "opioid antidote; blocks opioids, does nothing on its own" },
   { "id": "propranolol", "name": "Propranolol", "hex": "#00CCCC", "latin": "pallidus merus cyaneus", "note": "slow, faint heart" },
   { "id": "clonidine", "name": "Clonidine", "hex": "#008888", "latin": "satur merus cyaneus", "note": "slow heart, mild sedation" },
   { "id": "ipecac", "name": "Ipecac", "hex": "#00AA66", "latin": "clarus merus prasinus", "note": "nausea, gut shutdown" },

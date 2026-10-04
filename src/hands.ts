@@ -650,8 +650,8 @@ function sampleMass(arm: Arm, beakers: Beaker[], at: THREE.Vector3, origin: THRE
   return mass;
 }
 
-// The pose target can sit in the cavity of a wide pot. Put it back on the outside
-// of the wall so the hand is not driven through the glass.
+// The pose target can sit in the cavity of a wide pot. The glass still pushes it back
+// outside, so the hand is not driven through the wall.
 function clearOfVessel(beakers: Beaker[], point: THREE.Vector3) {
   for (const beaker of beakers) {
     if (beaker.radius <= BEAKER_RADIUS) continue;
@@ -664,6 +664,8 @@ function clearOfVessel(beakers: Beaker[], point: THREE.Vector3) {
     vesselRel.addScaledVector(vesselAxis, -axial);
     if (Math.abs(axial) > beaker.height / 2) continue;
     const radial = vesselRel.length();
+    // The mouth is open. Only the glass, not the space inside it, pushes the hand out.
+    if (radial < beaker.radius - 0.01) continue;
     const limit = beaker.radius + 0.02;
     if (radial >= limit) continue;
     if (radial < 1e-4) vesselRel.set(1, 0, 0);
@@ -719,6 +721,7 @@ function outsidePush(beakers: Beaker[], x: number, y: number, z: number) {
     const ry = relY - axis.y * axial;
     const rz = relZ - axis.z * axial;
     const radial = Math.hypot(rx, ry, rz);
+    if (radial < beaker.radius - 0.01) continue;
     const need = beaker.radius + 0.012 - radial;
     if (need <= push) continue;
     push = need;
@@ -740,7 +743,9 @@ function vesselMass(beakers: Beaker[], sample: THREE.Vector3) {
     const axial = vesselRel.dot(vesselAxis);
     vesselRel.addScaledVector(vesselAxis, -axial);
     if (Math.abs(axial) > beaker.height / 2 + 0.025) continue;
-    if (vesselRel.length() < beaker.radius + 0.016) mass = Math.max(mass, beaker.body.mass());
+    const radial = vesselRel.length();
+    if (radial < beaker.radius - 0.012 || radial > beaker.radius + 0.016) continue;
+    mass = Math.max(mass, beaker.body.mass());
   }
   return mass;
 }

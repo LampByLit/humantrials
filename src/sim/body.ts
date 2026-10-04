@@ -2,7 +2,7 @@ import { analyzeBalance } from "./balance";
 import { derive, draw, type Solution } from "./compound";
 import { config } from "./config";
 import { drive, noise } from "./effect";
-import { catalogDrive, catalogFade, milkReaches, milkScale } from "./reactions";
+import { blockScale, capDrive, catalogCeiling, catalogDrive, catalogFade, isOpioid, milkReaches, milkScale } from "./reactions";
 import { createRng } from "./rng";
 
 export const organNames = ["heart", "brain", "liver"] as const;
@@ -181,7 +181,10 @@ export function stepBody(body: Body, blood: Blood, dt: number): Symptom[] {
 
 function noiseBurden(doses: readonly Dose[]) {
   let total = 0;
-  for (const dose of doses) if (dose.hex.toUpperCase() !== MPH_HEX) total += noise(derive(dose.hex), dose.mass);
+  for (const dose of doses) {
+    if (dose.hex.toUpperCase() === MPH_HEX || catalogCeiling(dose.hex) < Infinity) continue;
+    total += noise(derive(dose.hex), dose.mass);
+  }
   return total;
 }
 
@@ -216,15 +219,21 @@ function clearanceRate(liver: Organ | undefined) {
 
 export function evaluate(organs: readonly Organ[], doses: readonly Dose[]): { organs: Organ[]; symptoms: Symptom[] } {
   const softened = milkScale(doses);
+  const blocked = blockScale(doses);
   const next = organs.map((organ) => {
     let totalDrive = organ.side;
+    const capped = new Map<string, number>();
     for (const dose of doses) {
-      if (dose.hex.toUpperCase() === MPH_HEX || dose.hex.toUpperCase() === "#FFFFFF") continue;
-      const known = catalogDrive(dose.hex, organ.name);
-      let amount = known === null ? drive(derive(dose.hex), organ, dose.mass) : known * dose.mass;
-      if (milkReaches(dose.hex)) amount *= softened;
-      totalDrive += amount;
+      const hex = dose.hex.toUpperCase();
+      if (hex === MPH_HEX || hex === "#FFFFFF") continue;
+      const known = catalogDrive(hex, organ.name);
+      let amount = known === null ? drive(derive(hex), organ, dose.mass) : known * dose.mass;
+      if (milkReaches(hex)) amount *= softened;
+      if (isOpioid(hex)) amount *= blocked;
+      if (catalogCeiling(hex) < Infinity) capped.set(hex, (capped.get(hex) ?? 0) + amount);
+      else totalDrive += amount;
     }
+    for (const [hex, amount] of capped) totalDrive += capDrive(amount, catalogCeiling(hex));
     totalDrive *= sensitivity(organ.integrity);
     const deflection = Math.tanh((totalDrive - organ.adaptation) / config.deflectionScale);
     return { ...organ, deflection };

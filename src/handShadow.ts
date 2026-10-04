@@ -12,7 +12,9 @@ const TEXEL = (2 * HALF) / MAP_SIZE;
 // The cast sphere has to sit entirely in front of the near plane.
 const HOVER = 0.6;
 const NEAR = HOVER - CAST_RADIUS - 0.05;
-const FLOOR = -0.4;
+// Above the floor tiles and below the bench body, so the hand shadow lands on
+// glass and benches and never on the floor.
+const FLOOR = 0.04;
 const PALM = new THREE.Vector3(0, 0.06, 0);
 
 export type HandShadow = {
@@ -20,8 +22,8 @@ export type HandShadow = {
 };
 
 // A light straight above the hand. The hand is the only thing drawn into its shadow
-// map, so the silhouette falls directly underneath, on the bench, a beaker, or the
-// floor, whatever height and angle the hand is held at.
+// map, so the silhouette falls directly underneath, on a bench or a beaker, whatever
+// height and angle the hand is held at.
 export function createHandShadow(scene: THREE.Scene, camera: THREE.Camera, hands: Hands): HandShadow {
   camera.layers.enable(HAND_LAYER);
 

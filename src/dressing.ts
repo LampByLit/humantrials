@@ -1,9 +1,11 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { BENCH_SURFACE, mountAnalyzer, ROOM_HEIGHT, ROOM_X, ROOM_Z, type Beaker } from "./lab";
+import { EXIT_SPAN, EXIT_X, mountAnalyzer, ROOM_HEIGHT, ROOM_X, ROOM_Z, type Beaker } from "./lab";
+import { mountMixer } from "./mixer";
 import { whiteSurface } from "./theme";
 import cabinetUrl from "../retro_industrial_control_cabinet.glb?url";
+import exitWallUrl from "../industrial_horror_wall__game_environment.glb?url";
 
 // School Classrooms Asset Pack by styloo, CC0.
 // https://styloo.itch.io/classroom-asset-pack
@@ -94,33 +96,26 @@ function addModule(scene: THREE.Scene, source: THREE.Object3D, x: number, z: num
 
 export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers: Beaker[]) {
   const loader = new GLTFLoader();
-  const load = async (name: string) => {
-    const gltf = await loader.loadAsync(`/models/lab/${name}.glb`);
+  const loadUrl = async (url: string) => {
+    const gltf = await loader.loadAsync(url);
     prepare(gltf.scene);
     return gltf.scene;
   };
+  const load = (name: string) => loadUrl(`/models/lab/${name}.glb`);
 
-  const [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials, cabinet] =
-    await Promise.all([
-      load("floor"),
-      load("wall"),
-      load("window"),
-      load("door"),
-      load("door-panel"),
-      load("shelf"),
-      load("extinguisher"),
-      load("chair"),
-      load("microscope"),
-      load("centrifuge"),
-      load("vials"),
-      loader.loadAsync(cabinetUrl).then((gltf) => {
-        prepare(gltf.scene);
-        return gltf.scene;
-      }),
-    ]);
+  const [floor, wall, windowWall, shelf, extinguisher, chair, cabinet, exitWall] = await Promise.all([
+    load("floor"),
+    load("wall"),
+    load("window"),
+    load("shelf"),
+    load("extinguisher"),
+    load("chair"),
+    loadUrl(cabinetUrl),
+    loadUrl(exitWallUrl),
+  ]);
 
   const paint = whiteSurface(0.92);
-  for (const model of [floor, wall, windowWall, door, doorPanel, shelf, extinguisher, chair, microscope, centrifuge, vials]) {
+  for (const model of [floor, wall, windowWall, shelf, extinguisher, chair]) {
     model.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (mesh.isMesh) mesh.material = paint;
@@ -135,7 +130,6 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
   const xSlots = slots(ROOM_X);
   const zSlots = slots(ROOM_Z);
   const lastX = xSlots[xSlots.length - 1];
-  const doorX = xSlots[xSlots.length - 2];
   for (const [i, x] of xSlots.entries()) {
     for (const [j, z] of zSlots.entries()) {
       const tile = floor.clone(true);
@@ -147,8 +141,8 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
 
   // North, the wall the player faces: windows over the benches, plain panels behind the shelves.
   for (const x of xSlots) addModule(scene, Math.abs(x) === lastX ? wall : windowWall, x, -WALL_Z, 0);
-  // South: a door near the east corner.
-  for (const x of xSlots) addModule(scene, x === doorX ? door : wall, x, WALL_Z, Math.PI);
+  // South: plain panels either side of the industrial exit.
+  for (const x of xSlots) if (Math.abs(x - EXIT_X) > EXIT_SPAN / 2) addModule(scene, wall, x, WALL_Z, Math.PI);
   // East and west: windows all along.
   for (const z of zSlots) {
     addModule(scene, windowWall, WALL_X, z, -Math.PI / 2);
@@ -180,9 +174,13 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
     solid(world, bookcase);
   }
 
-  const doorLeaf = place(doorPanel, doorX, WALL_Z, 0, 0);
-  flush(doorLeaf, "z", "max", WALL_Z - 0.02);
-  scene.add(doorLeaf);
+  // The exit's posts stand about 0.2m proud of its back face, so the back of its box
+  // goes to the outer face of the shell collider and the wall itself lines up with the panels.
+  const exitWidth = new THREE.Box3().setFromObject(exitWall).getSize(new THREE.Vector3()).x;
+  const exit = place(exitWall, EXIT_X, WALL_Z, Math.PI, 0, EXIT_SPAN / exitWidth);
+  flush(exit, "x", "min", EXIT_X - EXIT_SPAN / 2);
+  flush(exit, "z", "max", ROOM_Z + 0.1);
+  scene.add(exit);
 
   const hose = place(extinguisher, WALL_X - 0.5, WALL_Z - 0.5, 0, 0);
   flush(hose, "x", "max", WALL_X - 0.06);
@@ -206,12 +204,6 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
     solid(world, stool);
   }
 
-  // Instruments sit on the back edge of the south-facing benches, behind the glassware.
-  const onBench = (source: THREE.Object3D, x: number, z: number) => {
-    scene.add(place(source, x, z - 0.22, 0, BENCH_SURFACE));
-  };
-  onBench(microscope, 0, -1.8);
-  onBench(vials, -2.5, -1.8);
-  onBench(centrifuge, 2.5, -1.8);
-  mountAnalyzer(scene, world, cabinet, beakers);
+  const analyzer = mountAnalyzer(scene, world, cabinet, beakers);
+  mountMixer(scene, world, cabinet, beakers, analyzer);
 }

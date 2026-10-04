@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
-import type { Beaker } from "../lab";
+import { vesselContains, type Beaker } from "../lab";
 import { CHANNEL_FLOOR } from "../sim/compound";
 import { mixIn, portion, STOCK_CONCENTRATION, water, type Solution } from "./solution";
 import { lowestRim, pourFlow, solveSurface, type Vec3 } from "./volume";
@@ -435,8 +435,24 @@ function localUpOf(vessel: Vessel, rotation: THREE.Quaternion, out: Vec3): Vec3 
 
 const localUp: Vec3 = { x: 0, y: 1, z: 0 };
 
+function containerOf(sim: FluidSim, vessel: Vessel) {
+  let best: Vessel | null = null;
+  for (const other of sim.vessels) {
+    if (other === vessel || other.beaker.radius < vessel.beaker.radius + 0.006) continue;
+    if (!vesselContains(other.beaker, vessel.beaker)) continue;
+    if (!best || other.beaker.radius < best.beaker.radius) best = other;
+  }
+  return best;
+}
+
 function pourVessel(sim: FluidSim, world: RAPIER.World, vessel: Vessel, dt: number) {
   const beaker = vessel.beaker;
+  const host = containerOf(sim, vessel);
+  if (host && beaker.solution.volume > 1e-8) {
+    receive(sim, host.beaker, drawOut(vessel, beaker.solution.volume));
+    vessel.dripDebt = 0;
+    return;
+  }
   const { rotation } = poseOf(beaker);
   const up = localUpOf(vessel, rotation, localUp);
   const half = beaker.height / 2;
