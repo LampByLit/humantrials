@@ -90,7 +90,13 @@ The name shown on a dose is not the Latin class. Stocked compounds are snapped t
 
 ### 2.6 Catalog [Decided]
 
-`concept/chems.json` lists 50 common substances and the hex each one is. A catalog hex is that substance. Drinking it drives the heart, brain, and liver by the substance's profile in `src/sim/reactions.ts`, not by hue, so caffeine still alerts and pounds even though the receptors have moved. Any other hex, including a mix, still uses receptor tuning (section 3). The profile also sets how the dose feels: shake, spasm, heartbeat, color wash, skin color, blur, and how much it slows the body. A dead body cannot walk, look, or use the hands.
+`concept/chems.json` lists 50 common substances and 3 foods, and the hex each one is. A catalog hex is that substance. Drinking it drives the heart, brain, and liver by the substance's profile in `src/sim/reactions.ts`, not by hue, so caffeine still alerts and pounds even though the receptors have moved. Any other hex, including a mix, still uses receptor tuning (section 3). The profile also sets how the dose feels: shake, spasm, heartbeat, color wash, skin color, blur, and how much it slows the body. A dead body cannot walk, look, or use the hands.
+
+### 2.7 Food and nutrition [Decided]
+
+Three catalog entries have `"category": "food"`: Wormmeal `#A0705A` (mostly protein), Kelpmash `#2E5E3A` (mostly vitamins), and Beetmash `#7A1E2A` (mostly energy). Food pushes no organ. Swallowing it feeds the body instead of entering the blood. The eight analogs nearest each food have their own names (`src/sim/food.ts`); no name is an established color name. Analogs feed less, by the analog scale. The food table is restocked at random each game with three picks from each food's family.
+
+The body tracks energy, protein, and vitamins from 0 to 1. Each runs down in real time: a full stomach is hungry again after an hour, and protein and vitamins drain more slowly. The player starts hungry. Hunger and shortfalls show as symptom text. Starvation slows, shakes, and darkens the view; low protein slows and weakens the grip; low vitamins blur, unsteady, and pale the body. Once energy is gone, the body dies of starvation after a few seconds, unless a swallow of food lands in that time. A medium beaker of a food restores its main nutrient from empty. Tunables are in `config.nutrition`.
 
 ## 3. Effect model: receptors as color filters
 

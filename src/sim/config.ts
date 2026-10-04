@@ -66,4 +66,17 @@ export const config = {
     far: 0.34,
     leak: 0.18,
   },
+  // Levels run 0 (empty) to 1 (full), drained per real hour. A full stomach turns hungry
+  // after an hour; protein and vitamins run down more slowly. The player starts hungry.
+  nutrition: {
+    start: { energy: 0.3, protein: 0.5, vitamins: 0.5 },
+    drainPerHour: { energy: 0.65, protein: 0.2, vitamins: 0.2 },
+    cap: 1.2,
+    full: 1.05,
+    hungry: 0.35,
+    starving: 0.15,
+    deficient: 0.3,
+    // Seconds at an empty stomach before starvation kills. A swallow in that time saves you.
+    starveHold: 8,
+  },
 } as const;

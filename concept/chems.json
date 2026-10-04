@@ -48,5 +48,8 @@
   { "id": "nitrous", "name": "Nitrous", "hex": "#99CCFF", "latin": "albus spurius caeruleus", "note": "brief numbing and light sedation" },
   { "id": "capsaicin", "name": "Capsaicin", "hex": "#FF3300", "latin": "albus merus ruber", "note": "burning pain, then numbing" },
   { "id": "strychnine", "name": "Strychnine", "hex": "#AAFF00", "latin": "albus merus chlorus", "note": "pain, hypersensitivity, seizure" },
-  { "id": "ephedrine", "name": "Ephedrine", "hex": "#CCFF00", "latin": "albus merus flavus", "note": "alert and a faster heart" }
+  { "id": "ephedrine", "name": "Ephedrine", "hex": "#CCFF00", "latin": "albus merus flavus", "note": "alert and a faster heart" },
+  { "id": "wormmeal", "name": "Wormmeal", "hex": "#A0705A", "latin": "clarus spurius aurantius", "note": "food: mostly protein", "category": "food" },
+  { "id": "kelpmash", "name": "Kelpmash", "hex": "#2E5E3A", "latin": "satur spurius viridis", "note": "food: mostly vitamins", "category": "food" },
+  { "id": "beetmash", "name": "Beetmash", "hex": "#7A1E2A", "latin": "satur merus ruber", "note": "food: mostly energy", "category": "food" }
 ]

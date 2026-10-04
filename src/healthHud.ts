@@ -120,7 +120,7 @@ function heartBeat(phase: number) {
   return 0;
 }
 
-export function symptomCard(symptoms: readonly Symptom[]) {
+export function symptomCard(symptoms: readonly Pick<Symptom, "direction" | "band" | "text">[]) {
   if (!symptoms.length) return "";
   const lines = symptoms
     .map((symptom) => `<div class="${symptomClass(symptom)}">${escapeHtml(symptom.text)}</div>`)

@@ -20,7 +20,7 @@ function organ(name: Organ["name"], theta: number): Organ {
 
 describe("catalog reactions", () => {
   it("covers every catalog hex", () => {
-    expect(listed).toHaveLength(50);
+    expect(listed).toHaveLength(53);
     expect(catalogHexes.slice().sort()).toEqual(listed.map((entry) => entry.hex).sort());
   });
 

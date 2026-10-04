@@ -54,6 +54,19 @@ export type Sense = {
   mud: number;
 };
 
+// Extra pull from the body's own state (malnutrition), added before saturation.
+export type Strain = {
+  slow: number;
+  shake: number;
+  vignette: number;
+  numb: number;
+  blur: number;
+  sway: number;
+  pale: number;
+};
+
+const NO_STRAIN: Strain = { slow: 0, shake: 0, vignette: 0, numb: 0, blur: 0, sway: 0, pale: 0 };
+
 const BLACK: readonly [number, number, number] = [0, 0, 0];
 const FLUSH: readonly [number, number, number] = [0.86, 0.32, 0.24];
 const PALE: readonly [number, number, number] = [0.72, 0.78, 0.84];
@@ -191,6 +204,10 @@ const profiles: Record<string, Profile> = {
   "#FF3300": drug(1.6, 0.8, 0, { shake: 2.5, spasm: 0.8, wash: 2, tint: BURN, flush: 4, skin: BURN, numb: 0.6 }),
   "#AAFF00": drug(2.2, 5.8, -0.5, { shake: 2, spasm: 8, pound: 1.5, wash: 1, tint: [0.8, 1, 0.2], flush: 1, skin: FLUSH }),
   "#CCFF00": drug(2.8, 1.8, 0, { shake: 1.4, pound: 2.4, wash: 0.7, tint: WARM, flush: 1.4, skin: FLUSH }),
+  // Food feeds the body (see nutrition.ts); it pushes no organ.
+  "#A0705A": drug(0, 0, 0, { ceiling: HARMLESS }),
+  "#2E5E3A": drug(0, 0, 0, { ceiling: HARMLESS }),
+  "#7A1E2A": drug(0, 0, 0, { ceiling: HARMLESS }),
 };
 
 function bend(profile: Profile, analog: Analog): Profile {
@@ -306,7 +323,12 @@ export const catalogHexes = Object.keys(profiles);
 
 type Reading = { name: string; deflection: number };
 
-export function senseOf(organs: readonly Reading[], doses: readonly { hex: string; mass: number }[], alive: boolean): Sense {
+export function senseOf(
+  organs: readonly Reading[],
+  doses: readonly { hex: string; mass: number }[],
+  alive: boolean,
+  strain: Strain = NO_STRAIN,
+): Sense {
   if (!alive) {
     return {
       shake: 0,
@@ -336,13 +358,13 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   const up = (value: number) => Math.max(0, value);
   const down = (value: number) => Math.max(0, -value);
 
-  let shake = up(brain) * 0.85 + up(heart) * 0.3;
+  let shake = up(brain) * 0.85 + up(heart) * 0.3 + strain.shake;
   let spasm = up(brain) * 0.35;
   let pound = up(heart) * 1.05;
-  let sway = down(brain) * 0.45;
-  let blur = down(brain) * 1.05;
-  let slow = down(brain) * 1.25 + down(heart) * 0.45;
-  let numb = down(brain) * 0.55;
+  let sway = down(brain) * 0.45 + strain.sway;
+  let blur = down(brain) * 1.05 + strain.blur;
+  let slow = down(brain) * 1.25 + down(heart) * 0.45 + strain.slow;
+  let numb = down(brain) * 0.55 + strain.numb;
   let pulse = 0;
   let trip = 0;
   let drift = 0;
@@ -377,6 +399,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
   addSkin(FLUSH, up(heart) * 0.9);
   addSkin(PALE, down(heart) * 1.1);
   addSkin(JAUNDICE, down(liver) * 1.3);
+  addSkin(PALE, strain.pale);
 
   let mph = 0;
   const softened = milkScale(doses);
@@ -419,7 +442,7 @@ export function senseOf(organs: readonly Reading[], doses: readonly { hex: strin
     wash: Math.max(sat(tw), red),
     skin,
     flush: sat(sw),
-    vignette: sat(down(heart) * 1.3 + down(brain) * 0.65),
+    vignette: sat(down(heart) * 1.3 + down(brain) * 0.65 + strain.vignette),
     sway: sat(sway),
     blur: sat(blur),
     move: 1 - sat(slow),

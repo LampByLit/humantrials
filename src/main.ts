@@ -17,6 +17,7 @@ import { createAffect, stepAffect } from "./sim/affect";
 import { createBlood, createBody, pilotOpen, stepBody, swallow, symptomsFrom, type Blood, type OrganName } from "./sim/body";
 import { isAnalog } from "./sim/analogs";
 import { chemLabel, isCatalog } from "./sim/colorName";
+import { createNutrition, eat, needSymptoms, stepNutrition, strainOf, type Nutrition } from "./sim/nutrition";
 import { senseOf, type Sense } from "./sim/reactions";
 import { createTitle } from "./title";
 import { applyTheme, dark } from "./theme";
@@ -148,6 +149,7 @@ const handShadow = createHandShadow(scene, camera, hands);
 const fluid = createFluid(scene, beakers, envMap, sun.position, demixerSpouts());
 const body = createBody(1);
 const blood = createBlood();
+const nutrition = createNutrition();
 const pourAnchor = new THREE.Vector3();
 const pourUp = new THREE.Vector3();
 const pourQuat = new THREE.Quaternion();
@@ -160,7 +162,7 @@ loading.classList.add("hidden");
 input.ready = true;
 
 if (import.meta.env.DEV) {
-  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood, affect } });
+  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood, affect, nutrition } });
 }
 
 const grounded = { value: true };
@@ -194,7 +196,7 @@ function frame(now: number) {
   }
 
   world.integrationParameters.dt = dt;
-  const sense = senseOf(body.organs, blood.doses, body.alive);
+  const sense = senseOf(body.organs, blood.doses, body.alive, strainOf(nutrition));
   if (!body.alive || sense.operate < 0.12) {
     input.space = false;
     input.squeeze = false;
@@ -230,13 +232,20 @@ function frame(now: number) {
   readIntake();
   readDemixer();
   showEyes(eyeReadout, camera, hands, beakers, blood);
-  if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
+  if (body.alive && fluid.drunk.mass > 0) {
+    const gulp = toChem(fluid.drunk);
+    if (!eat(nutrition, gulp.hex, gulp.mass)) swallow(blood, gulp);
+  }
+  if (body.alive && stepNutrition(nutrition, dt)) {
+    body.alive = false;
+    body.cause = "starvation";
+  }
   stepBody(body, blood, dt);
   if (body.alive) stepAffect(affect, blood.doses, dt);
-  const felt = senseOf(body.organs, blood.doses, body.alive);
+  const felt = senseOf(body.organs, blood.doses, body.alive, strainOf(nutrition));
   applyFeel(player, felt);
   tintSkin(hands, felt);
-  renderHealth(body, blood, felt.rate, player.clock);
+  renderHealth(body, blood, nutrition, felt.rate, player.clock);
   renderVeil(veil, canvas, felt, player.clock);
   if (pouring) {
     const at = pouring.body.translation();
@@ -367,7 +376,7 @@ function renderVeil(root: HTMLElement, canvas: HTMLCanvasElement, sense: Sense, 
 
 let receiptWritten = false;
 
-function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, rate: number, time: number) {
+function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, nutrition: Nutrition, rate: number, time: number) {
   if (!body.alive) {
     if (!receiptWritten) {
       receipt.innerHTML = receiptCard(body, blood);
@@ -394,7 +403,7 @@ function renderHealth(body: ReturnType<typeof createBody>, blood: Blood, rate: n
   vitalBreath.textContent = vitals.breath;
   vitalTemp.textContent = vitals.temp;
   vitalClear.textContent = vitals.clear;
-  const symptomHtml = symptomCard(symptomsFrom(body.organs));
+  const symptomHtml = symptomCard([...symptomsFrom(body.organs), ...needSymptoms(nutrition)]);
   if (symptoms.dataset.card !== symptomHtml) {
     symptoms.dataset.card = symptomHtml;
     symptoms.innerHTML = symptomHtml;

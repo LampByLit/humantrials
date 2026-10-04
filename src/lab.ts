@@ -2,6 +2,7 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { milk, solutionFromHex, STOCK_CONCENTRATION, toChem, water, type Solution } from "./fluid/solution";
 import { chemLabel, latinName, namedColor } from "./sim/colorName";
+import { drawFood } from "./sim/food";
 import { drawStock, type HueSlot } from "./sim/labStock";
 import { createRng } from "./sim/rng";
 import { whiteSurface } from "./theme";
@@ -103,6 +104,7 @@ export const STATIONS = [
 
 type Stock = { size: Size; hex?: number; fill: number; exact?: boolean; fixed?: boolean; y?: number };
 type Bench = {
+  label: string;
   x: number;
   z: number;
   facing: 1 | -1;
@@ -165,11 +167,14 @@ const ELEMENTAL_POTS = 20;
 // nearest the aisle, and `back` is a second row behind them. A missing hex is water;
 // a zero fill is an empty vessel. Rows pair up across aisles: facing 1 is worked from
 // the south side, facing -1 from the north.
-const CATALOG = catalog.map((entry) => parseInt(entry.hex.slice(1), 16));
+const CATALOG = catalog.filter((entry) => entry.category !== "food").map((entry) => parseInt(entry.hex.slice(1), 16));
+const HUE_NAMES = ["Reds", "Oranges", "Yellows", "Limes", "Greens", "Mints", "Cyans", "Azures", "Blues", "Violets", "Purples", "Pinks"];
 
 function benches(seed: number): Bench[] {
   const drawn = drawStock(createRng(seed), HUE_TABLES, ELEMENTAL_POTS);
+  const food = drawFood(createRng(seed + 1)).map((hex) => parseInt(hex.slice(1), 16));
   const hues: Bench[] = HUE_TABLES.map((slot, index) => ({
+    label: HUE_NAMES[slot.stem] + (HUE_TABLES.findIndex((other) => other.stem === slot.stem) < index ? " II" : ""),
     x: slot.x,
     z: slot.z,
     facing: slot.facing,
@@ -180,6 +185,7 @@ function benches(seed: number): Bench[] {
   return [
     ...hues,
     {
+      label: "Elementals",
       x: 2.55,
       z: -6.4,
       facing: 1,
@@ -188,10 +194,11 @@ function benches(seed: number): Bench[] {
       back: largePots(drawn.elementals.back),
       backRow: POT_BACK,
     },
-    { x: -5, z: -1.8, facing: 1, items: [...waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM], 0.8), { size: TRAY, fill: 0 }], back: waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
-    { x: -2.5, z: 2, facing: -1, items: empties([TRAY, LARGE, MEDIUM, MEDIUM, TRAY]), back: empties([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
-    { x: -2, z: 5.4, facing: -1, width: 3.4, items: [{ size: POT_S, fill: 0.7 }, { size: POT_S, fill: 0 }, { size: POT_M, fill: 0.7 }, { size: POT_M, fill: 0 }, { size: POT_L, fill: 0.7 }, { size: POT_L, fill: 0 }, { size: POT_XL, fill: 0.7 }, { size: POT_XL, fill: 0 }] },
+    { label: "Water", x: -5, z: -1.8, facing: 1, items: [...waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM], 0.8), { size: TRAY, fill: 0 }], back: waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
+    { label: "Glassware", x: -2.5, z: 2, facing: -1, items: empties([TRAY, LARGE, MEDIUM, MEDIUM, TRAY]), back: empties([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
+    { label: "Pots", x: -2, z: 5.4, facing: -1, width: 3.4, items: [{ size: POT_S, fill: 0.7 }, { size: POT_S, fill: 0 }, { size: POT_M, fill: 0.7 }, { size: POT_M, fill: 0 }, { size: POT_L, fill: 0.7 }, { size: POT_L, fill: 0 }, { size: POT_XL, fill: 0.7 }, { size: POT_XL, fill: 0 }] },
     {
+      label: "Catalog",
       x: -3.2,
       z: 8.1,
       facing: -1,
@@ -199,13 +206,15 @@ function benches(seed: number): Bench[] {
       items: chems(CATALOG.slice(0, 25), [MEDIUM], 0.7).map((item) => ({ ...item, exact: true })),
       back: chems(CATALOG.slice(25), [MEDIUM], 0.7).map((item) => ({ ...item, exact: true })),
     },
+    { label: "Food", x: -8.6, z: 8.1, facing: -1, width: 2.6, items: named(food, [MEDIUM, LARGE, MEDIUM], 0.7) },
     {
+      label: "Water",
       x: 7.5,
       z: 2,
       facing: -1,
       items: waters([MEDIUM, LARGE, MEDIUM, LARGE, MEDIUM], 0.8),
     },
-    ...STATIONS.map((station): Bench => ({ x: station.x, z: station.z, facing: -1, color: station.hex, items: [] })),
+    ...STATIONS.map((station, i): Bench => ({ label: ["Red", "Green", "Blue"][i], x: station.x, z: station.z, facing: -1, color: station.hex, items: [] })),
   ];
 }
 
@@ -235,6 +244,7 @@ export function createLab(scene: THREE.Scene, world: RAPIER.World, seed = (Math.
     const width = bench.width ?? BENCH_WIDTH;
     const paint = bench.color === undefined ? null : new THREE.MeshStandardMaterial({ color: bench.color, roughness: 0.5 });
     addBench(scene, world, bench.x, bench.z, width, paint ?? topMaterial, paint ?? cabinetMaterial, trimMaterial);
+    addLabel(scene, bench, width);
     const panel = new THREE.Mesh(new THREE.BoxGeometry(width * 0.78, 0.02, 0.3), panelMaterial);
     panel.position.set(bench.x, ROOM_HEIGHT - 0.01, bench.z);
     scene.add(panel);
@@ -280,6 +290,38 @@ function addBench(
   const kick = new THREE.Mesh(new THREE.BoxGeometry(width - 0.1, 0.08, BENCH_DEPTH - 0.16), trim);
   kick.position.set(x, 0.04, z);
   scene.add(kick);
+}
+
+const LABEL_HEIGHT = 0.024;
+const LABEL_MARGIN = 0.025;
+
+// Printed on the bench top in the corner nearest the player's right hand, reading toward the aisle.
+function addLabel(scene: THREE.Scene, bench: Bench, width: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = "600 30px system-ui, sans-serif";
+  ctx.fillStyle = bench.color === undefined ? "#4a4d50" : "#f4f4f2";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillText(bench.label.toUpperCase(), canvas.width - 4, canvas.height / 2 + 2);
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  const labelWidth = (LABEL_HEIGHT * canvas.width) / canvas.height;
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(labelWidth, LABEL_HEIGHT),
+    new THREE.MeshStandardMaterial({ map, transparent: true, roughness: 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }),
+  );
+  label.rotation.set(-Math.PI / 2, 0, bench.facing === 1 ? 0 : Math.PI);
+  label.position.set(
+    bench.x + bench.facing * (width / 2 - LABEL_MARGIN - labelWidth / 2),
+    BENCH_SURFACE + 0.0005,
+    bench.z + bench.facing * (BENCH_DEPTH / 2 - LABEL_MARGIN - LABEL_HEIGHT / 2),
+  );
+  label.receiveShadow = true;
+  scene.add(label);
 }
 
 export function addBox(

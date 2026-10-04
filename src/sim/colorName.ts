@@ -1,6 +1,7 @@
 import { colornames } from "color-name-list/bestof";
 import catalog from "../../concept/chems.json";
 import { derive } from "./compound";
+import { foodName } from "./food";
 
 // The stocked hexchems are the best-of names from https://github.com/meodai/color-names.
 // A mix that is not an exact entry still takes the nearest name.
@@ -53,10 +54,10 @@ export function colorName(hex: string): string {
   return nearest(hex.toUpperCase()).name;
 }
 
-/** Catalog name, or the exact color-list name. Anything else is shown as its hex. */
+/** Catalog name, a named food analog, or the exact color-list name. Anything else is shown as its hex. */
 export function chemLabel(hex: string): string {
   const key = hex.toUpperCase();
-  return drugName.get(key) ?? byHex.get(key)?.name ?? key;
+  return drugName.get(key) ?? foodName(key) ?? byHex.get(key)?.name ?? key;
 }
 
 export function isCatalog(hex: string): boolean {
