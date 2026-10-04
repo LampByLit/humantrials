@@ -50,19 +50,22 @@ type Puddle = Solution & {
   dirty: boolean;
 };
 
-type Vessel = {
-  beaker: Beaker;
-  surfaceUp: THREE.Vector3;
-  plane: THREE.Plane;
-  bodyMat: THREE.MeshStandardMaterial;
-  cap: THREE.Mesh;
-  capMat: THREE.ShaderMaterial;
+type Stream = {
   stream: THREE.Mesh;
   streamGeo: THREE.BufferGeometry;
   streamPos: Float32Array;
   points: THREE.Vector3[];
   pointCount: number;
   streamRadius: number;
+};
+
+type Vessel = Stream & {
+  beaker: Beaker;
+  surfaceUp: THREE.Vector3;
+  plane: THREE.Plane;
+  bodyMat: THREE.MeshStandardMaterial;
+  cap: THREE.Mesh;
+  capMat: THREE.ShaderMaterial;
   dripDebt: number;
   mass: number;
   incoming: Solution;
@@ -73,8 +76,19 @@ type Vessel = {
 
 export type Capsule = { x: number; y: number; z: number; half: number; radius: number };
 
+// A fixed tap. What is put into `liquid` runs out of the opening at x, y, z, straight
+// down, at `rate` cubic metres a second.
+export type Spout = { x: number; y: number; z: number; rate: number; liquid: Solution };
+
+type Tap = Stream & { spout: Spout };
+
+type Launch = { x: number; y: number; z: number; vx: number; vy: number; vz: number };
+
+const SPOUT_SPEED = 0.4;
+
 export type FluidSim = {
   vessels: Vessel[];
+  taps: Tap[];
   droplets: Droplet[];
   drops: THREE.InstancedMesh;
   puddles: Puddle[];
@@ -109,6 +123,7 @@ export function createFluid(
   beakers: Beaker[],
   envMap: THREE.Texture | null,
   lightDir: THREE.Vector3,
+  spouts: Spout[] = [],
 ): FluidSim {
   const light = lightDir.clone().normalize();
   const dropGeo = new THREE.SphereGeometry(1, 14, 10);
@@ -154,6 +169,7 @@ export function createFluid(
 
   return {
     vessels,
+    taps: spouts.map((spout) => ({ ...createStream(scene, envMap, WATER_TINT), spout })),
     droplets: [],
     drops,
     puddles,
@@ -192,6 +208,7 @@ export function updateFluid(
   }
 
   for (const vessel of sim.vessels) pourVessel(sim, world, vessel, step);
+  for (const tap of sim.taps) runTap(sim, world, tap, step);
   for (const vessel of sim.vessels) commit(vessel);
 
   flushPending(sim, step);
@@ -204,6 +221,7 @@ export function updateFluid(
     updateVesselVisual(vessel);
     writeStream(vessel);
   }
+  for (const tap of sim.taps) writeStream(tap);
   writeDroplets(sim);
   writePuddles(sim);
   if (aim !== sim.pourBeaker) sim.poured = 0;
@@ -311,6 +329,24 @@ function createVessel(
   cap.scale.setScalar(0.3);
   scene.add(cap);
 
+  return {
+    ...createStream(scene, envMap, bodyMat.color),
+    beaker,
+    surfaceUp: new THREE.Vector3(0, 1, 0),
+    plane,
+    bodyMat,
+    cap,
+    capMat,
+    dripDebt: 0,
+    mass: -1,
+    incoming: water(0),
+    outV: 0,
+    outM: 0,
+    outC: 0,
+  };
+}
+
+function createStream(scene: THREE.Scene, envMap: THREE.Texture | null, tint: THREE.Color): Stream {
   const streamPos = new Float32Array(MAX_RINGS * RING_SEGMENTS * 3);
   const streamGeo = new THREE.BufferGeometry();
   streamGeo.setAttribute("position", new THREE.BufferAttribute(streamPos, 3));
@@ -327,7 +363,7 @@ function createVessel(
   streamGeo.setIndex(indices);
   streamGeo.setDrawRange(0, 0);
   const streamMat = new THREE.MeshStandardMaterial({
-    color: bodyMat.color.clone(),
+    color: tint.clone(),
     roughness: 0.1,
     metalness: 0.02,
     transparent: true,
@@ -343,26 +379,7 @@ function createVessel(
   stream.renderOrder = 2;
   scene.add(stream);
 
-  return {
-    beaker,
-    surfaceUp: new THREE.Vector3(0, 1, 0),
-    plane,
-    bodyMat,
-    cap,
-    capMat,
-    stream,
-    streamGeo,
-    streamPos,
-    points: [],
-    pointCount: 0,
-    streamRadius: 0.005,
-    dripDebt: 0,
-    mass: -1,
-    incoming: water(0),
-    outV: 0,
-    outM: 0,
-    outC: 0,
-  };
+  return { stream, streamGeo, streamPos, points: [], pointCount: 0, streamRadius: 0.005 };
 }
 
 /** Writes the liquid's colour into `out` and returns its opacity. */
@@ -545,6 +562,30 @@ function traceStream(
   overflow: number,
 ) {
   const end = walkStream(sim, world, vessel, overflow, (x, y, z) => pushPoint(vessel, x, y, z));
+  deliver(sim, world, end, liquid);
+}
+
+function runTap(sim: FluidSim, world: RAPIER.World, tap: Tap, dt: number) {
+  tap.pointCount = 0;
+  const { spout } = tap;
+  const liquid = spout.liquid;
+  if (liquid.volume <= 1e-9) {
+    drain(liquid);
+    return;
+  }
+  const out = portion(liquid, Math.min(liquid.volume, spout.rate * dt));
+  liquid.volume -= out.volume;
+  liquid.mass = Math.max(0, liquid.mass - out.mass);
+  liquid.cloud = Math.max(0, liquid.cloud - out.cloud);
+  tap.streamRadius = Math.min(0.013, Math.max(0.0045, Math.sqrt(spout.rate / (Math.PI * 0.9))));
+  const streamMat = tap.stream.material as THREE.MeshStandardMaterial;
+  streamMat.opacity = Math.max(STREAM_MIN_ALPHA, shade(out, streamMat.color));
+  const launch = { x: spout.x, y: spout.y, z: spout.z, vx: 0, vy: -SPOUT_SPEED, vz: 0 };
+  const end = walkFrom(sim, world, launch, null, (x, y, z) => pushPoint(tap, x, y, z));
+  deliver(sim, world, end, out);
+}
+
+function deliver(sim: FluidSim, world: RAPIER.World, end: ReturnType<typeof walkFrom>, liquid: Solution) {
   if (end.swallowed) {
     mixIn(sim.drunk, liquid);
     return;
@@ -566,8 +607,20 @@ function walkStream(
   vessel: Vessel,
   overflow: number,
   onPoint: ((x: number, y: number, z: number) => void) | null,
+) {
+  return walkFrom(sim, world, lipLaunch(vessel, overflow), vessel.beaker, onPoint);
+}
+
+// `source` is the vessel the liquid leaves, which must not catch its own stream. A wide
+// tray's wall stays in range far past the lip, and catching it there sends the pour
+// back onto the tray.
+function walkFrom(
+  sim: FluidSim,
+  world: RAPIER.World,
+  launch: Launch,
+  source: Beaker | null,
+  onPoint: ((x: number, y: number, z: number) => void) | null,
 ): { hit: Hit | null; swallowed: boolean; x: number; y: number; z: number } {
-  const launch = lipLaunch(vessel, overflow);
   let x = launch.x;
   let y = launch.y;
   let z = launch.z;
@@ -586,14 +639,11 @@ function walkStream(
     const nx = x + ((vx + nvx) * 0.5) * h;
     const ny = y + ((vy + nvy) * 0.5) * h;
     const nz = z + ((vz + nvz) * 0.5) * h;
-    // The stream leaves its own vessel, so the vessel's body must not catch it. A wide
-    // tray's wall stays in range far past the lip, and catching it there sends the pour
-    // back onto the tray.
     if (insideDrinker(sim, nx, ny, nz)) {
       onPoint?.(nx, ny, nz);
       return { hit: null, swallowed: true, x: nx, y: ny, z: nz };
     }
-    const hit = segmentHit(sim, world, vessel.beaker, x, y, z, nx, ny, nz, vessel.beaker.body);
+    const hit = segmentHit(sim, world, source, x, y, z, nx, ny, nz, source?.body);
     if (hit) {
       onPoint?.(hit.x, hit.y, hit.z);
       return { hit, swallowed: false, x: hit.x, y: hit.y, z: hit.z };
@@ -1234,7 +1284,7 @@ function updateVesselVisual(vessel: Vessel) {
   (vessel.capMat.uniforms.beakerInv.value as THREE.Matrix4).copy(matrix);
 }
 
-function pushPoint(vessel: Vessel, x: number, y: number, z: number) {
+function pushPoint(vessel: Stream, x: number, y: number, z: number) {
   if (vessel.pointCount >= MAX_RINGS) return;
   let point = vessel.points[vessel.pointCount];
   if (!point) {
@@ -1245,7 +1295,7 @@ function pushPoint(vessel: Vessel, x: number, y: number, z: number) {
   vessel.pointCount += 1;
 }
 
-function writeStream(vessel: Vessel) {
+function writeStream(vessel: Stream) {
   const count = vessel.pointCount;
   if (count < 2) {
     vessel.stream.visible = false;

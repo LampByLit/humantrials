@@ -1,7 +1,7 @@
 import catalog from "../../concept/chems.json";
 import { config } from "./config";
 
-// Each catalog hex owns 32 nearby colors. A cell goes to the closest catalog
+// Each catalog hex owns config.analogs.count nearby colors. A cell goes to the closest catalog
 // chemical. Once that chemical has its set, a neighbor that still needs analogs
 // may take a free cell a little farther out.
 

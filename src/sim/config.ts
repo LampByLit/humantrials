@@ -59,7 +59,7 @@ export const config = {
   },
   // Nearby colors of a catalog chemical. Nearer analogs keep more of the effect.
   analogs: {
-    count: 32,
+    count: 128,
     step: 8,
     reach: 72,
     near: 0.7,

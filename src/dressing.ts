@@ -2,9 +2,10 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { EXIT_SPAN, EXIT_X, mountAnalyzer, ROOM_HEIGHT, ROOM_X, ROOM_Z, type Beaker } from "./lab";
-import { mountMixer } from "./mixer";
+import { mountDemixer } from "./demixer";
 import { whiteSurface } from "./theme";
 import cabinetUrl from "../retro_industrial_control_cabinet.glb?url";
+import faucetUrl from "../faucet.glb?url";
 import exitWallUrl from "../industrial_horror_wall__game_environment.glb?url";
 
 // School Classrooms Asset Pack by styloo, CC0.
@@ -103,7 +104,7 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
   };
   const load = (name: string) => loadUrl(`/models/lab/${name}.glb`);
 
-  const [floor, wall, windowWall, shelf, extinguisher, chair, cabinet, exitWall] = await Promise.all([
+  const [floor, wall, windowWall, shelf, extinguisher, chair, cabinet, exitWall, faucet] = await Promise.all([
     load("floor"),
     load("wall"),
     load("window"),
@@ -112,6 +113,7 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
     load("chair"),
     loadUrl(cabinetUrl),
     loadUrl(exitWallUrl),
+    loadUrl(faucetUrl),
   ]);
 
   const paint = whiteSurface(0.92);
@@ -205,5 +207,5 @@ export async function dressLab(scene: THREE.Scene, world: RAPIER.World, beakers:
   }
 
   const analyzer = mountAnalyzer(scene, world, cabinet, beakers);
-  mountMixer(scene, world, cabinet, beakers, analyzer);
+  mountDemixer(scene, world, cabinet, faucet, beakers, analyzer);
 }

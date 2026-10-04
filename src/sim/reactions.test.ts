@@ -131,11 +131,12 @@ describe("catalog reactions", () => {
     expect(evaluate(organs, [naloxone]).organs.every((item) => item.deflection === 0)).toBe(true);
   });
 
-  it("gives each catalog chemical 32 weaker analogs", () => {
+  it("gives each catalog chemical its set of weaker analogs", () => {
+    const count = config.analogs.count;
     const seen = new Set<string>();
     for (const entry of listed) {
       const analogs = analogsOf(entry.hex);
-      expect(analogs).toHaveLength(32);
+      expect(analogs).toHaveLength(count);
       for (const analog of analogs) {
         expect(analog.parent).toBe(entry.hex.toUpperCase());
         expect(analog.scale).toBeLessThan(1);
@@ -145,7 +146,7 @@ describe("catalog reactions", () => {
         seen.add(analog.hex);
       }
     }
-    expect(seen.size).toBe(listed.length * 32);
+    expect(seen.size).toBe(listed.length * count);
     expect(analogOf("#123456")).toBeNull();
     expect(catalogDrive("#123456", "heart")).toBeNull();
   });

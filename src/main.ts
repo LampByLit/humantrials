@@ -8,7 +8,7 @@ import { createHands, driveLeftHand, followLeftHand, settleHand, tintSkin, updat
 import { createHold, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
 import { containVessels, createLab, readIntake, syncBeakers, type Beaker } from "./lab";
-import { readMixer } from "./mixer";
+import { demixerSpouts, readDemixer } from "./demixer";
 import { dressLab } from "./dressing";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
@@ -140,7 +140,7 @@ const [hands, , title] = await Promise.all([
 const reach = createReach(hands, player);
 const hold = createHold();
 const handShadow = createHandShadow(scene, camera, hands);
-const fluid = createFluid(scene, beakers, envMap, sun.position);
+const fluid = createFluid(scene, beakers, envMap, sun.position, demixerSpouts());
 const body = createBody(1);
 const blood = createBlood();
 const pourAnchor = new THREE.Vector3();
@@ -222,7 +222,7 @@ function frame(now: number) {
   const drinker = body.alive && player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
   updateFluid(fluid, world, dt, pouring, drinker);
   readIntake();
-  readMixer();
+  readDemixer();
   showEyes(eyeReadout, camera, hands, beakers, blood);
   if (body.alive && fluid.drunk.mass > 0) swallow(blood, toChem(fluid.drunk));
   stepBody(body, blood, dt);
