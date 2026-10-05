@@ -13,6 +13,8 @@ export const input = {
   squeeze: false,
   locked: false,
   playing: false,
+  // Pointer lock is down so Jane's field can take keys, and the lab keeps simulating.
+  console: false,
   ready: false,
   dead: false,
   slow: (): boolean => input.keys.has("ShiftLeft") || input.keys.has("ShiftRight"),
@@ -40,11 +42,21 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
     if (locked) {
       wasLocked = true;
       input.playing = true;
+      input.console = false;
       prompt.classList.add("hidden");
     } else if (wasLocked) {
       wasLocked = false;
-      setLocked(false);
-      input.playing = false;
+      input.locked = false;
+      input.keys.clear();
+      input.space = false;
+      input.squeeze = false;
+      input.gripLocked = false;
+      input.pairToggle = false;
+      input.themeToggle = false;
+      if (!input.console) {
+        input.playing = false;
+        prompt.classList.remove("hidden");
+      }
     }
   });
 
@@ -53,6 +65,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   document.addEventListener(
     "keydown",
     (event) => {
+      if (input.console || event.target instanceof HTMLInputElement) return;
       if (!input.playing) return;
       if (event.altKey || event.code === "AltLeft" || event.code === "AltRight") event.preventDefault();
     },
@@ -60,7 +73,9 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   );
 
   document.addEventListener("keydown", (event) => {
-    if (event.code === "Space") event.preventDefault();
+    const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+    if (event.code === "Space" && !typing) event.preventDefault();
+    if (typing || input.console) return;
     if (!input.playing) return;
     if (event.altKey || event.code === "AltLeft" || event.code === "AltRight") event.preventDefault();
     if (event.code === "KeyF" && !event.repeat) input.pairToggle = true;
@@ -88,7 +103,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   document.addEventListener(
     "wheel",
     (event) => {
-      if (input.playing) input.reach += event.deltaY;
+      if (input.playing && !input.console) input.reach += event.deltaY;
     },
     { passive: true },
   );
@@ -98,6 +113,12 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
 
   const onPress = (event: MouseEvent) => {
     if (event.button !== 0 && event.button !== 2) return;
+    if (input.console && event.target === canvas) {
+      input.console = false;
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      canvas.requestPointerLock();
+      return;
+    }
     if (!input.playing) {
       if (!input.ready || input.dead) return;
       input.playing = true;

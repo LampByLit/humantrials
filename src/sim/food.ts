@@ -49,6 +49,13 @@ export function foodName(hex: string): string | null {
   return names.get(hex.toUpperCase()) ?? null;
 }
 
+/** Hex of a named food analog such as Grubmeal. */
+export function foodHex(name: string): string | null {
+  const key = name.trim().toLowerCase();
+  for (const [hex, label] of names) if (label.toLowerCase() === key) return hex;
+  return null;
+}
+
 /** Each food and its eight named analogs. */
 export function foodFamilies(): readonly { parent: string; members: readonly string[] }[] {
   return families;

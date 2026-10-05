@@ -74,7 +74,9 @@ type Vessel = Stream & {
   outC: number;
 };
 
-export type Capsule = { x: number; y: number; z: number; half: number; radius: number };
+export type Capsule = { x: number; y: number; z: number; half: number; radius: number; id?: string };
+
+export type Gulp = { id: string; solution: Solution };
 
 // A fixed tap. What is put into `liquid` runs out of the opening at x, y, z, straight
 // down, at `rate` cubic metres a second.
@@ -100,6 +102,9 @@ export type FluidSim = {
   pourBeaker: Beaker | null;
   drunk: Solution;
   drinker: Capsule | null;
+  mouths: Capsule[];
+  gulps: Gulp[];
+  kit: { scene: THREE.Scene; circle: THREE.CircleGeometry; envMap: THREE.Texture | null; light: THREE.Vector3 };
 };
 
 const tmp = new THREE.Vector3();
@@ -180,7 +185,30 @@ export function createFluid(
     pourBeaker: null,
     drunk: water(0),
     drinker: null,
+    mouths: [],
+    gulps: [],
+    kit: { scene, circle, envMap, light },
   };
+}
+
+export function trackBeaker(sim: FluidSim, beaker: Beaker) {
+  if (sim.vessels.some((vessel) => vessel.beaker === beaker)) return;
+  sim.vessels.push(createVessel(sim.kit.scene, beaker, sim.kit.circle, sim.kit.envMap, sim.kit.light));
+}
+
+export function forgetBeaker(sim: FluidSim, beaker: Beaker) {
+  const index = sim.vessels.findIndex((vessel) => vessel.beaker === beaker);
+  if (index < 0) return;
+  const vessel = sim.vessels[index];
+  sim.vessels.splice(index, 1);
+  vessel.body.removeFromParent();
+  vessel.cap.removeFromParent();
+  vessel.stream.removeFromParent();
+  vessel.body.geometry.dispose();
+  vessel.bodyMat.dispose();
+  vessel.capMat.dispose();
+  vessel.streamGeo.dispose();
+  (vessel.stream.material as THREE.Material).dispose();
 }
 
 export function updateFluid(
@@ -195,6 +223,7 @@ export function updateFluid(
   sim.drunk.mass = 0;
   sim.drunk.cloud = 0;
   sim.drunk.volume = 0;
+  sim.gulps.length = 0;
   for (const vessel of sim.vessels) {
     vessel.incoming.mass = 0;
     vessel.incoming.cloud = 0;
@@ -584,8 +613,8 @@ function runTap(sim: FluidSim, world: RAPIER.World, tap: Tap, dt: number) {
 }
 
 function deliver(sim: FluidSim, world: RAPIER.World, end: ReturnType<typeof walkFrom>, liquid: Solution) {
-  if (end.swallowed) {
-    mixIn(sim.drunk, liquid);
+  if (end.mouth) {
+    takeMouth(sim, end.mouth, liquid);
     return;
   }
   if (end.hit) {
@@ -618,7 +647,7 @@ function walkFrom(
   launch: Launch,
   source: Beaker | null,
   onPoint: ((x: number, y: number, z: number) => void) | null,
-): { hit: Hit | null; swallowed: boolean; x: number; y: number; z: number } {
+): { hit: Hit | null; mouth: string | null; x: number; y: number; z: number } {
   let x = launch.x;
   let y = launch.y;
   let z = launch.z;
@@ -626,7 +655,8 @@ function walkFrom(
   let vy = launch.vy;
   let vz = launch.vz;
   onPoint?.(x, y, z);
-  if (insideDrinker(sim, x, y, z)) return { hit: null, swallowed: true, x, y, z };
+  const started = mouthAt(sim, x, y, z);
+  if (started) return { hit: null, mouth: started, x, y, z };
   const gravity = world.gravity;
 
   for (let i = 0; i < MAX_RINGS - 1; i++) {
@@ -637,14 +667,15 @@ function walkFrom(
     const nx = x + ((vx + nvx) * 0.5) * h;
     const ny = y + ((vy + nvy) * 0.5) * h;
     const nz = z + ((vz + nvz) * 0.5) * h;
-    if (insideDrinker(sim, nx, ny, nz)) {
+    const mouth = mouthAt(sim, nx, ny, nz);
+    if (mouth) {
       onPoint?.(nx, ny, nz);
-      return { hit: null, swallowed: true, x: nx, y: ny, z: nz };
+      return { hit: null, mouth, x: nx, y: ny, z: nz };
     }
     const hit = segmentHit(sim, world, source, x, y, z, nx, ny, nz, source?.body);
     if (hit) {
       onPoint?.(hit.x, hit.y, hit.z);
-      return { hit, swallowed: false, x: hit.x, y: hit.y, z: hit.z };
+      return { hit, mouth: null, x: hit.x, y: hit.y, z: hit.z };
     }
     onPoint?.(nx, ny, nz);
     x = nx;
@@ -655,18 +686,37 @@ function walkFrom(
     vz = nvz;
   }
 
-  return { hit: null, swallowed: false, x, y, z };
+  return { hit: null, mouth: null, x, y, z };
 }
 
-function insideDrinker(sim: FluidSim, x: number, y: number, z: number) {
-  const drinker = sim.drinker;
-  if (!drinker) return false;
-  const dy = y - drinker.y;
-  const along = Math.max(-drinker.half, Math.min(drinker.half, dy));
-  const ox = x - drinker.x;
+function insideCapsule(capsule: Capsule, x: number, y: number, z: number) {
+  const dy = y - capsule.y;
+  const along = Math.max(-capsule.half, Math.min(capsule.half, dy));
+  const ox = x - capsule.x;
   const oy = dy - along;
-  const oz = z - drinker.z;
-  return ox * ox + oy * oy + oz * oz <= drinker.radius * drinker.radius;
+  const oz = z - capsule.z;
+  return ox * ox + oy * oy + oz * oz <= capsule.radius * capsule.radius;
+}
+
+function mouthAt(sim: FluidSim, x: number, y: number, z: number): string | null {
+  if (sim.drinker && insideCapsule(sim.drinker, x, y, z)) return sim.drinker.id ?? "player";
+  for (const mouth of sim.mouths) {
+    if (insideCapsule(mouth, x, y, z)) return mouth.id ?? "player";
+  }
+  return null;
+}
+
+function takeMouth(sim: FluidSim, id: string, liquid: Solution) {
+  if (!id || id === "player") {
+    mixIn(sim.drunk, liquid);
+    return;
+  }
+  let gulp = sim.gulps.find((item) => item.id === id);
+  if (!gulp) {
+    gulp = { id, solution: water(0) };
+    sim.gulps.push(gulp);
+  }
+  mixIn(gulp.solution, liquid);
 }
 
 function updateAim(sim: FluidSim, world: RAPIER.World, beaker: Beaker | null, dt: number) {
@@ -982,8 +1032,9 @@ function stepDroplets(sim: FluidSim, world: RAPIER.World, dt: number) {
   for (let i = sim.droplets.length - 1; i >= 0; i--) {
     const drop = sim.droplets[i];
     drop.age += dt;
-    if (insideDrinker(sim, drop.x, drop.y, drop.z)) {
-      mixIn(sim.drunk, drop);
+    const swallowed = mouthAt(sim, drop.x, drop.y, drop.z);
+    if (swallowed) {
+      takeMouth(sim, swallowed, drop);
       sim.droplets.splice(i, 1);
       continue;
     }
@@ -1216,6 +1267,27 @@ function isDrop(sim: FluidSim, world: RAPIER.World, x: number, y: number, z: num
 
 function puddleRadius(volume: number) {
   return Math.sqrt(volume / (Math.PI * PUDDLE_DEPTH));
+}
+
+// A body standing in a puddle takes `rate` cubic metres a second out of every puddle it overlaps.
+export function sipPuddle(sim: FluidSim, x: number, y: number, z: number, radius: number, rate: number, dt: number): Solution | null {
+  const want = Math.max(0, rate * dt);
+  if (want <= 0) return null;
+  const sipped = water(0);
+  for (const puddle of sim.puddles) {
+    if (puddle.volume <= 1e-9 || sipped.volume >= want) continue;
+    const at = puddle.mesh.position;
+    if (Math.abs(at.y - y) > 0.15) continue;
+    if (Math.hypot(at.x - x, at.z - z) > puddleRadius(puddle.volume) + radius) continue;
+    const gulp = portion(puddle, Math.min(puddle.volume, want - sipped.volume));
+    puddle.volume = Math.max(0, puddle.volume - gulp.volume);
+    puddle.mass = Math.max(0, puddle.mass - gulp.mass);
+    puddle.cloud = Math.max(0, puddle.cloud - gulp.cloud);
+    puddle.dirty = true;
+    if (puddle.volume <= 1e-8) drain(puddle);
+    mixIn(sipped, gulp);
+  }
+  return sipped.volume > 1e-9 ? sipped : null;
 }
 
 function scoopPuddles(sim: FluidSim) {

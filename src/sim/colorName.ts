@@ -26,6 +26,14 @@ const named: Named[] = colornames.map((entry) => {
 });
 
 const byHex = new Map(named.map((entry) => [entry.hex, entry]));
+const byName = new Map<string, string>();
+for (const entry of named) {
+  const key = entry.name.toLowerCase();
+  if (!byName.has(key)) byName.set(key, entry.hex);
+}
+
+// A blue-counter material that is not in the public color list.
+const PROPER = new Map<string, string>([["#398514", "Thy Flesh Consumed"]]);
 const drugName = new Map(catalog.map((entry) => [entry.hex.toUpperCase(), entry.name]));
 const drugLatin = new Map(catalog.map((entry) => [entry.hex.toUpperCase(), entry.latin]));
 
@@ -54,10 +62,15 @@ export function colorName(hex: string): string {
   return nearest(hex.toUpperCase()).name;
 }
 
-/** Catalog name, a named food analog, or the exact color-list name. Anything else is shown as its hex. */
+/** Catalog name, a proper order name, a named food analog, or the exact color-list name. */
 export function chemLabel(hex: string): string {
   const key = hex.toUpperCase();
-  return drugName.get(key) ?? foodName(key) ?? byHex.get(key)?.name ?? key;
+  return PROPER.get(key) ?? drugName.get(key) ?? foodName(key) ?? byHex.get(key)?.name ?? key;
+}
+
+/** Exact color-list hex for a name, or null. */
+export function hexNamed(name: string): string | null {
+  return byName.get(name.trim().toLowerCase()) ?? null;
 }
 
 export function isCatalog(hex: string): boolean {

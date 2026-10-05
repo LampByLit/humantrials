@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { abilityNotes, bloodCard, needFill, organClass, organTone, receiptCard, symptomCard, traceSamples, vitalReadout } from "./healthHud";
 import { createBlood, createBody, type Body, type Symptom } from "./sim/body";
+import { foodFamilies, foodName } from "./sim/food";
 
 describe("health hud", () => {
   it("reads a resting body as a quiet pulse, breath, and temperature", () => {
@@ -63,6 +64,12 @@ describe("health hud", () => {
     expect(card).toContain("Cocaine");
     expect(card).toContain("Acetaminophen");
     expect(card).toContain("onset");
+    blood.doses.push({ hex: "#A0705A", mass: 0.4 });
+    const analog = foodFamilies()[0].members[1];
+    blood.doses.push({ hex: analog, mass: 0.2 });
+    const fed = bloodCard(blood);
+    expect(fed).toContain("Wormmeal");
+    expect(fed).toContain(foodName(analog)!);
     expect(bloodCard(createBlood())).toContain("Clear");
   });
 

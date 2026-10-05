@@ -20,4 +20,8 @@ describe("color names", () => {
   it("shows the hex when that color has no exact name", () => {
     expect(chemLabel("#000001")).toBe("#000001");
   });
+
+  it("keeps the blue order under its proper name", () => {
+    expect(chemLabel("#398514")).toBe("Thy Flesh Consumed");
+  });
 });

@@ -77,8 +77,8 @@ const MILK = 0xffffff;
 const BENCH_TOP = 0.9;
 // Top of the bench box. Dressing sits instruments on this.
 export const BENCH_SURFACE = BENCH_TOP + 0.035;
-const BENCH_WIDTH = 1.55;
-const BENCH_DEPTH = 0.78;
+export const BENCH_WIDTH = 1.55;
+export const BENCH_DEPTH = 0.78;
 // Distance from the bench centre line to the front row of glass, and to the row behind it.
 const FRONT_ROW = BENCH_DEPTH / 2 - 0.13;
 const BACK_ROW = FRONT_ROW - 0.2;
@@ -92,6 +92,11 @@ export const ROOM_HEIGHT = 5.4;
 // centred on EXIT_X. The player never goes through it.
 export const EXIT_X = 4;
 export const EXIT_SPAN = 8;
+// The exit door's clear opening, centred on DOOR_X in the south wall. The wall's collider
+// leaves this gap, and exit.ts fills it with a hinged leaf and a short corridor behind.
+export const DOOR_X = EXIT_X - 2.5;
+export const DOOR_WIDTH = 1;
+export const DOOR_HEIGHT = 2;
 
 // Coloured benches lined up in front of the exit, listed from the player's left. They stand
 // about 2m off the wall so the exit door can swing in and someone can walk out past it.
@@ -235,7 +240,11 @@ export function createLab(scene: THREE.Scene, world: RAPIER.World, seed = (Math.
   addBox(scene, world, shell, w, 0.5, d, 0, -0.25, 0, false);
   addBox(scene, world, shell, w, 0.2, d, 0, ROOM_HEIGHT + 0.1, 0);
   addBox(scene, world, shell, w, ROOM_HEIGHT, 0.2, 0, ROOM_HEIGHT / 2, -ROOM_Z, false);
-  addBox(scene, world, shell, w, ROOM_HEIGHT, 0.2, 0, ROOM_HEIGHT / 2, ROOM_Z, false);
+  const doorLeft = DOOR_X - DOOR_WIDTH / 2;
+  const doorRight = DOOR_X + DOOR_WIDTH / 2;
+  addBox(scene, world, shell, doorLeft + ROOM_X, ROOM_HEIGHT, 0.2, (doorLeft - ROOM_X) / 2, ROOM_HEIGHT / 2, ROOM_Z, false);
+  addBox(scene, world, shell, ROOM_X - doorRight, ROOM_HEIGHT, 0.2, (doorRight + ROOM_X) / 2, ROOM_HEIGHT / 2, ROOM_Z, false);
+  addBox(scene, world, shell, DOOR_WIDTH, ROOM_HEIGHT - DOOR_HEIGHT, 0.2, DOOR_X, (ROOM_HEIGHT + DOOR_HEIGHT) / 2, ROOM_Z, false);
   addBox(scene, world, shell, 0.2, ROOM_HEIGHT, d, -ROOM_X, ROOM_HEIGHT / 2, 0, false);
   addBox(scene, world, shell, 0.2, ROOM_HEIGHT, d, ROOM_X, ROOM_HEIGHT / 2, 0, false);
 
@@ -572,6 +581,46 @@ function addTrayHandle(
     );
     return { ...part, collider, radius: HANDLE_RADIUS };
   });
+}
+
+/** A paid litre, already on a counter. The caller registers it with the fluid sim. */
+export function spawnDelivery(
+  scene: THREE.Scene,
+  world: RAPIER.World,
+  fill: "water" | "milk" | number,
+  litres: number,
+  x: number,
+  z: number,
+): Beaker {
+  const volume = Math.max(0.00005, litres * 0.001);
+  const sizes = [MEDIUM, LARGE, POT_S, POT_M, POT_L, POT_XL];
+  let size = POT_XL;
+  for (const candidate of sizes) {
+    const capacity = Math.PI * candidate.radius * candidate.radius * candidate.height * 0.72;
+    if (capacity >= volume) {
+      size = candidate;
+      break;
+    }
+  }
+  const full = Math.PI * size.radius * size.radius * size.height;
+  const stock: Stock = {
+    size,
+    fill: Math.min(volume, full * 0.72) / full,
+    exact: true,
+    hex: fill === "water" ? undefined : fill === "milk" ? MILK : fill,
+  };
+  return addVessel(scene, world, stock, x, z, -1);
+}
+
+export function removeVessel(scene: THREE.Scene, world: RAPIER.World, beakers: Beaker[], beaker: Beaker) {
+  const index = beakers.indexOf(beaker);
+  if (index >= 0) beakers.splice(index, 1);
+  scene.remove(beaker.mesh);
+  beaker.mesh.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.isMesh) mesh.geometry?.dispose();
+  });
+  world.removeRigidBody(beaker.body);
 }
 
 export function syncBeakers(beakers: Beaker[]) {

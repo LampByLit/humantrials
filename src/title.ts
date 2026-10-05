@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import handUrl from "../anatomically_accurate_rigged_hand_model_for_xr.glb?url";
 
 const BG = "#e9e9e7";
@@ -48,7 +49,7 @@ export async function createTitle(renderer: THREE.WebGLRenderer): Promise<Title>
     toneMapped: false,
   });
 
-  const gltf = await new GLTFLoader().loadAsync(handUrl);
+  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(handUrl);
   const hand = gltf.scene;
   hand.traverse((object) => {
     const mesh = object as THREE.Mesh;

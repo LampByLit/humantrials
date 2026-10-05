@@ -3,6 +3,7 @@ import listed from "../../concept/chems.json";
 import { createBlood, createBody, evaluate, stepBody, type Organ } from "./body";
 import { config } from "./config";
 import { analogOf, analogsOf } from "./analogs";
+import { foodFamilies } from "./food";
 import { catalogDrive, catalogFade, catalogHexes, senseOf } from "./reactions";
 import { createRng } from "./rng";
 
@@ -149,6 +150,21 @@ describe("catalog reactions", () => {
     expect(seen.size).toBe(listed.length * count);
     expect(analogOf("#123456")).toBeNull();
     expect(catalogDrive("#123456", "heart")).toBeNull();
+  });
+
+  it("lets food move organs the same way no matter where the receptors sit", () => {
+    const dose = [{ hex: "#7A1E2A", mass: 1.4 }];
+    const left = evaluate([organ("heart", 10), organ("brain", 200), organ("liver", 40)], dose);
+    const right = evaluate([organ("heart", 180), organ("brain", 20), organ("liver", 300)], dose);
+    expect(left.organs.map((item) => item.deflection)).toEqual(right.organs.map((item) => item.deflection));
+    expect(left.organs[0].deflection).toBeGreaterThan(config.symptoms.mild);
+    expect(left.organs[0].deflection).toBeLessThan(config.symptoms.severe);
+    const organs = [organ("heart", 0), organ("brain", 120), organ("liver", 240)];
+    const parent = evaluate(organs, [{ hex: "#A0705A", mass: 0.5 }]);
+    const cousin = evaluate(organs, [{ hex: foodFamilies()[0].members[1], mass: 0.5 }]);
+    expect(parent.organs[2].deflection).toBeGreaterThan(config.symptoms.mild);
+    expect(cousin.organs[2].deflection).toBeGreaterThan(0);
+    expect(cousin.organs[2].deflection).toBeLessThan(parent.organs[2].deflection);
   });
 
   it("lets a caffeine analog act like caffeine, only weaker and a little off", () => {

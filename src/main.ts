@@ -10,6 +10,7 @@ import { createHandShadow, updateHandShadow } from "./handShadow";
 import { containVessels, createLab, readIntake, syncBeakers, type Beaker } from "./lab";
 import { demixerSpouts, readDemixer } from "./demixer";
 import { dressLab } from "./dressing";
+import { exitDoor, stepExitDoor } from "./exit";
 import { createFluid, updateFluid } from "./fluid/sim";
 import { toChem } from "./fluid/solution";
 import { abilityNotes, bloodCard, needFill, organClass, organTone, receiptCard, symptomCard, tracePolyline, traceSamples, vitalReadout } from "./healthHud";
@@ -19,6 +20,8 @@ import { isAnalog } from "./sim/analogs";
 import { chemLabel, isCatalog } from "./sim/colorName";
 import { createNutrition, eat, needSymptoms, stepNutrition, strainOf, type Nutrition } from "./sim/nutrition";
 import { senseOf, type Sense } from "./sim/reactions";
+import { loadCast } from "./jane/cast";
+import { createSession } from "./jane/session";
 import { createTitle } from "./title";
 import { applyTheme, dark } from "./theme";
 
@@ -90,11 +93,12 @@ healthToggle.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.repeat || !input.playing) return;
+  if (input.console) return;
   if (event.code === "KeyC") setHudOpen(hud.classList.contains("collapsed"));
   if (event.code === "KeyH") setHealthOpen(health.classList.contains("collapsed"));
 });
 
-const pixelRatio = Math.min(window.devicePixelRatio, 2);
+const pixelRatio = Math.min(window.devicePixelRatio, 1.5);
 // At high pixel density the extra pixels already smooth edges, so MSAA mostly doubles the fill cost.
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: pixelRatio < 1.5, powerPreference: "high-performance" });
 renderer.setPixelRatio(pixelRatio);
@@ -140,22 +144,29 @@ const envMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
 
 const player = createPlayer(scene, world, camera);
-const beakers = createLab(scene, world);
-const [hands, , title] = await Promise.all([
+const runSeed = (Math.random() * 0x100000000) >>> 0;
+const beakers = createLab(scene, world, runSeed);
+const [hands, , title, cast] = await Promise.all([
   createHands(world),
   dressLab(scene, world, beakers),
   createTitle(renderer),
+  loadCast(),
 ]);
 const reach = createReach(hands, player);
 const hold = createHold();
 const handShadow = createHandShadow(scene, camera, hands);
 const fluid = createFluid(scene, beakers, envMap, sun.position, demixerSpouts());
+const jane = createSession({ scene, world, beakers, fluid, cast, seed: runSeed });
 const body = createBody(1);
 const blood = createBlood();
 const nutrition = createNutrition();
 const pourAnchor = new THREE.Vector3();
 const pourUp = new THREE.Vector3();
 const pourQuat = new THREE.Quaternion();
+const fingerRight = new THREE.Vector3();
+const fingerLeft = new THREE.Vector3();
+const palmRight = new THREE.Vector3();
+const palmLeft = new THREE.Vector3();
 
 // The title only appears once the lab has been drawn, so the first click is not
 // waiting on shader and shadow compilation.
@@ -165,7 +176,7 @@ loading.classList.add("hidden");
 input.ready = true;
 
 if (import.meta.env.DEV) {
-  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood, affect, nutrition } });
+  Object.assign(window, { game: { input, player, hands, reach, hold, beakers, fluid, world, body, blood, affect, nutrition, door: exitDoor, stepExitDoor, jane } });
 }
 
 const grounded = { value: true };
@@ -222,7 +233,18 @@ function frame(now: number) {
   driveLeftHand(hands, beakers, dt);
   updateHold(hold, hands, beakers, world, dt);
   const carried = hold.grips.map((grip) => grip.beaker);
+  const eyes = player.body.translation();
+  hands.arm.fingertip.getWorldPosition(fingerRight);
+  hands.arm.hand.getWorldPosition(palmRight);
+  const fingers = [fingerRight, palmRight];
+  if (hands.left.solid) {
+    hands.left.fingertip.getWorldPosition(fingerLeft);
+    hands.left.hand.getWorldPosition(palmLeft);
+    fingers.push(fingerLeft, palmLeft);
+  }
+  jane.update(dt, new Set(carried), { camera, x: eyes.x, y: eyes.y, z: eyes.z, hands: fingers });
   const castBefore = containVessels(beakers, world, carried);
+  if (stepExitDoor(dt)) sun.shadow.needsUpdate = true;
   world.step();
   const castAfter = containVessels(beakers, world, carried);
   if (castBefore || castAfter) sun.shadow.needsUpdate = true;
@@ -231,13 +253,18 @@ function frame(now: number) {
   updateHandShadow(handShadow, hands);
   const pouring = input.space ? (hold.grips[0]?.beaker ?? null) : null;
   const drinker = body.alive && player.pitch >= DRINK_PITCH ? playerCapsule(player) : null;
+  fluid.mouths = jane.mouths();
   updateFluid(fluid, world, dt, pouring, drinker);
+  jane.feed(fluid.gulps);
+  jane.stepRats(dt);
+  if (jane.carrying()) sun.shadow.needsUpdate = true;
   readIntake();
   readDemixer();
   showEyes(eyeReadout, camera, hands, beakers, blood);
   if (body.alive && fluid.drunk.mass > 0) {
     const gulp = toChem(fluid.drunk);
-    if (!eat(nutrition, gulp.hex, gulp.mass)) swallow(blood, gulp);
+    eat(nutrition, gulp.hex, gulp.mass);
+    swallow(blood, gulp);
   }
   if (body.alive && stepNutrition(nutrition, dt)) {
     body.alive = false;

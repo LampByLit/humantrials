@@ -28,6 +28,7 @@ body {
 
 body:not(.playing) #health,
 body:not(.playing) #hud,
+body:not(.playing) #jane,
 body:not(.playing) #pour,
 body:not(.playing) #eyed,
 body:not(.playing) #veil {
@@ -438,6 +439,123 @@ body.dead #health {
   border-radius: 99px;
   font-size: 12px;
   letter-spacing: 0.04em;
+}
+
+#jane {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(760px, calc(100vw - 48px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+#jane-body {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px 12px;
+  background: rgba(8, 10, 12, 0.82);
+  color: #e7e4dc;
+  border: 1px solid rgba(231, 228, 220, 0.14);
+  border-radius: 8px;
+}
+
+#jane.collapsed #jane-body {
+  display: none;
+}
+
+#jane header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+#jane header b {
+  font-weight: 700;
+}
+
+#jane-credits {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+#jane-wants {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+#jane-log {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#jane-log p {
+  margin: 0;
+}
+
+#jane-log b {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+#jane-form input {
+  pointer-events: auto;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid rgba(231, 228, 220, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f1ea;
+  font: 15px "Segoe UI", sans-serif;
+}
+
+#jane-form input:focus {
+  outline: 1px solid rgba(231, 228, 220, 0.7);
+}
+
+#interact {
+  position: fixed;
+  z-index: 4;
+  display: none;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-bottom-width: 4px;
+  border-radius: 6px;
+  background: rgba(8, 10, 12, 0.78);
+  color: #f4f1ea;
+  font: 700 16px "Segoe UI", sans-serif;
+  line-height: 32px;
+  text-align: center;
+  pointer-events: none;
+}
+
+#interact.show {
+  display: block;
 }
 
 #hud {
