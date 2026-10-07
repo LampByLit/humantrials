@@ -1041,7 +1041,7 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   const vessel = addVessel(
     scene,
     world,
-    { size: { radius: 0.06, height: 0.1, density: 1 }, fill: 0, fixed: true, y: top - 0.04 },
+    { size: { radius: WELL_RADIUS, height: 0.1, density: 1 }, fill: 0, fixed: true, y: top - 0.04 },
     cx,
     cz,
     1,
@@ -1050,15 +1050,7 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   intake = vessel;
   vessel.mesh.visible = false;
 
-  const height = top - 0.12;
-  const midY = height / 2;
-  const spanX = fitted.max.x - fitted.min.x;
-  const spanZ = fitted.max.z - fitted.min.z;
-  const thick = 0.05;
-  addBox(scene, world, shellInvisible(), thick, height, spanZ, fitted.min.x + thick / 2, midY, cz, false);
-  addBox(scene, world, shellInvisible(), thick, height, spanZ, fitted.max.x - thick / 2, midY, cz, false);
-  addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.min.z + thick / 2, false);
-  addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.max.z - thick / 2, false);
+  addCabinetShell(scene, world, fitted, WELL_RADIUS);
 
   paintReadout(blankReadout());
   readoutMap = new THREE.CanvasTexture(readout);
@@ -1068,6 +1060,39 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   addScreen(scene, faceBox(model, towardAisle), towardAisle, readoutMap);
   addBroadScreen(scene, faceBox(model, broadSide), broadSide, readoutMap);
   return model;
+}
+
+// Radius of the fixed vessel sunk into a cabinet's well.
+export const WELL_RADIUS = 0.06;
+const CABINET_SLAB = 0.03;
+
+// Invisible walls round a cabinet, capped by a slab flush with its top so glass can stand
+// there and spills puddle on it. The slab leaves a square cutout over the well; the well's
+// round shell fills it, so a pour or an overflowing puddle still drops into the well.
+export function addCabinetShell(scene: THREE.Scene, world: RAPIER.World, fitted: THREE.Box3, hole: number) {
+  const top = fitted.max.y;
+  const cx = (fitted.min.x + fitted.max.x) / 2;
+  const cz = (fitted.min.z + fitted.max.z) / 2;
+  const spanX = fitted.max.x - fitted.min.x;
+  const spanZ = fitted.max.z - fitted.min.z;
+  const thick = 0.05;
+  const height = top - CABINET_SLAB;
+  const midY = height / 2;
+  const mat = shellInvisible();
+  addBox(scene, world, mat, thick, height, spanZ, fitted.min.x + thick / 2, midY, cz, false);
+  addBox(scene, world, mat, thick, height, spanZ, fitted.max.x - thick / 2, midY, cz, false);
+  addBox(scene, world, mat, spanX, height, thick, cx, midY, fitted.min.z + thick / 2, false);
+  addBox(scene, world, mat, spanX, height, thick, cx, midY, fitted.max.z - thick / 2, false);
+
+  const slabY = top - CABINET_SLAB / 2;
+  const westW = cx - hole - fitted.min.x;
+  const eastW = fitted.max.x - (cx + hole);
+  const northD = cz - hole - fitted.min.z;
+  const southD = fitted.max.z - (cz + hole);
+  addBox(scene, world, mat, westW, CABINET_SLAB, spanZ, fitted.min.x + westW / 2, slabY, cz, false);
+  addBox(scene, world, mat, eastW, CABINET_SLAB, spanZ, fitted.max.x - eastW / 2, slabY, cz, false);
+  addBox(scene, world, mat, hole * 2, CABINET_SLAB, northD, cx, slabY, fitted.min.z + northD / 2, false);
+  addBox(scene, world, mat, hole * 2, CABINET_SLAB, southD, cx, slabY, fitted.max.z - southD / 2, false);
 }
 
 const invisible = new THREE.MeshStandardMaterial();

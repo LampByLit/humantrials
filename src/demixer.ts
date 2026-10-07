@@ -2,7 +2,7 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { mixIn, portion, solutionFromHex, toChem, water, type Solution } from "./fluid/solution";
 import type { Spout } from "./fluid/sim";
-import { addBox, addVessel, faceBox, shellInvisible, type Beaker } from "./lab";
+import { addBox, addCabinetShell, addVessel, faceBox, shellInvisible, WELL_RADIUS, type Beaker } from "./lab";
 import { twoParts } from "./sim/recipe";
 
 // A shorter cousin of the analyzer. A pour into its well is split into the two equal-part
@@ -170,7 +170,7 @@ export function mountDemixer(
   const vessel = addVessel(
     scene,
     world,
-    { size: { radius: 0.06, height: 0.1, density: 1 }, fill: 0, fixed: true, y: top - 0.04 },
+    { size: { radius: WELL_RADIUS, height: 0.1, density: 1 }, fill: 0, fixed: true, y: top - 0.04 },
     cx,
     cz,
     1,
@@ -179,15 +179,8 @@ export function mountDemixer(
   beakers.push(vessel);
   well = vessel;
 
-  const height = top - 0.12;
-  const midY = height / 2;
-  const spanX = fitted.max.x - fitted.min.x;
+  addCabinetShell(scene, world, fitted, WELL_RADIUS);
   const spanZ = fitted.max.z - fitted.min.z;
-  const thick = 0.05;
-  addBox(scene, world, shellInvisible(), thick, height, spanZ, fitted.min.x + thick / 2, midY, cz, false);
-  addBox(scene, world, shellInvisible(), thick, height, spanZ, fitted.max.x - thick / 2, midY, cz, false);
-  addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.min.z + thick / 2, false);
-  addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.max.z - thick / 2, false);
 
   // Faucets stand on the front corners of the top and reach out over the aisle.
   const tips = [-1, 1].map((side) => {
