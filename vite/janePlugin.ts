@@ -115,53 +115,57 @@ async function complete(apiKey: string, system: string, history: Turn[], text: s
     .trim();
 }
 
-export function janePlugin(apiKey: string): Plugin {
+export function janeHandler(apiKey: string) {
   const system = book(process.cwd());
+  return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (req.method !== "POST" || (req.url !== "/api/jane" && req.url !== "/api/speak")) {
+      next();
+      return;
+    }
+    try {
+      const payload = JSON.parse(await readBody(req)) as {
+        text?: string;
+        history?: Turn[];
+        state?: string;
+        voice?: string;
+      };
+      const text = (payload.text ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
+      if (!text) {
+        send(res, 400, JSON.stringify({ error: "empty" }));
+        return;
+      }
+      if (req.url === "/api/speak") {
+        const who = payload.voice === "player" ? "player" : "jane";
+        const key = createHash("sha1").update(`${who}\0${text}`).digest("hex");
+        let wav = cache.get(key);
+        if (!wav) {
+          wav = await speakWithPiper(process.cwd(), text, who);
+          if (cache.size > 40) cache.clear();
+          cache.set(key, wav);
+        }
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "audio/wav");
+        res.end(wav);
+        return;
+      }
+      if (!apiKey) {
+        send(res, 503, JSON.stringify({ error: "no-key" }));
+        return;
+      }
+      const line = await complete(apiKey, system, payload.history ?? [], text, payload.state ?? "");
+      send(res, 200, JSON.stringify({ text: line || "" }));
+    } catch (error) {
+      console.error(error);
+      send(res, 502, JSON.stringify({ error: "jane" }));
+    }
+  };
+}
+
+export function janePlugin(apiKey: string): Plugin {
   return {
     name: "jane",
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        if (req.method !== "POST" || (req.url !== "/api/jane" && req.url !== "/api/speak")) {
-          next();
-          return;
-        }
-        try {
-          const payload = JSON.parse(await readBody(req)) as {
-            text?: string;
-            history?: Turn[];
-            state?: string;
-            voice?: string;
-          };
-          const text = (payload.text ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
-          if (!text) {
-            send(res, 400, JSON.stringify({ error: "empty" }));
-            return;
-          }
-          if (req.url === "/api/speak") {
-            const who = payload.voice === "player" ? "player" : "jane";
-            const key = createHash("sha1").update(`${who}\0${text}`).digest("hex");
-            let wav = cache.get(key);
-            if (!wav) {
-              wav = await speakWithPiper(process.cwd(), text, who);
-              if (cache.size > 40) cache.clear();
-              cache.set(key, wav);
-            }
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "audio/wav");
-            res.end(wav);
-            return;
-          }
-          if (!apiKey) {
-            send(res, 503, JSON.stringify({ error: "no-key" }));
-            return;
-          }
-          const line = await complete(apiKey, system, payload.history ?? [], text, payload.state ?? "");
-          send(res, 200, JSON.stringify({ text: line || "" }));
-        } catch (error) {
-          console.error(error);
-          send(res, 502, JSON.stringify({ error: "jane" }));
-        }
-      });
+      server.middlewares.use(janeHandler(apiKey));
     },
   };
 }

@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "node server.ts"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
