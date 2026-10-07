@@ -118,7 +118,7 @@ export function createSession(game: {
         return;
       }
       memory.introduced = true;
-      say(arrivalBrief(ledger.green, ledger.blue));
+      say(arrivalBrief());
     },
   });
   jobs.enqueue = (job) => walker.enqueue(job);

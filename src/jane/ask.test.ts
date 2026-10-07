@@ -68,16 +68,11 @@ describe("Jane's local answers", () => {
     expect(replyTo("what do the rats eat", talk).text).toContain("Hood");
   });
 
-  it("briefs a first meeting in sentences", () => {
-    const ledger = createLedger(3);
-    const line = arrivalBrief(ledger.green, ledger.blue);
+  it("briefs a first meeting briefly", () => {
+    const line = arrivalBrief();
     expect(line).toContain("I'm Jane");
-    expect(line).toContain(ledger.green.name);
-    expect(line).toContain("stocktail");
-    expect(line).toContain("green counter");
-    expect(line).toContain("Thy Flesh Consumed");
-    expect(line).toContain("blue counter");
-    expect(line).not.toMatch(/Green\s+\d/);
+    expect(line).toContain("experiment inside an experiment");
+    expect(line.length).toBeLessThan(220);
   });
 
   it("sends an open question to the model", () => {

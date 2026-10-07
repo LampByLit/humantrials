@@ -53,14 +53,8 @@ export function experimentLine(): string {
   return "You were selected for the human-trial arm of an experiment inside an experiment. They are researching recursion. A mirror pointed at a mirror, if you want it shorter. Your part is the hexchemistry.";
 }
 
-export function arrivalBrief(green: Want, blue: Want): string {
-  return [
-    "I'm Jane. I keep the account, I carry the glass, and I replace the rats.",
-    "You are the human-trial arm of an experiment inside an experiment. They are studying recursion. Your part is the chemistry. Every chemical in this room is a color.",
-    `Green wants one litre of ${green.name}. That is a stocktail: a catalog chemical this lab keeps a sample of, and one the demixer can split. ${moneyText(green.pricePerLitre)} a litre, on your account, once I have looked at it. Find the sample, learn what it is made of, and mix a litre. Set the glass on the green counter. I come about a minute later and take one vessel at a time. I count shelf strength toward the litre. A thin pour counts for less. A near color counts on a sliding scale. More than a litre is fine. I pay for the litre they asked for, and I still take the extra glass.`,
-    `Blue wants one litre of a chemical called ${blue.name}. The color has to match exactly. They do not take near colors, and they do not pay in money. They pay with one litre of any chemical you name. Set their glass on the blue counter. I leave their answer on the red counter.`,
-    "Red has not sent an order. When they do, I will tell you.",
-  ].join(" ");
+export function arrivalBrief(): string {
+  return "I'm Jane. You are the human-trial arm of an experiment inside an experiment. They are studying recursion, and your part is the chemistry. Ask me anything.";
 }
 
 export function rehabLine(): string {
