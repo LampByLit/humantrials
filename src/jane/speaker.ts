@@ -16,22 +16,45 @@ function chunks(text: string): string[] {
 
 export type Voice = "jane" | "player";
 
-function fallback(text: string, voice: Voice): Promise<void> {
-  if (!("speechSynthesis" in window)) return Promise.resolve();
+const FEMALE = /\bfemale\b|zira|aria|jenny|samantha|libby|sonia|hazel|susan|karen|moira|tessa|victoria|emma|ava|michelle|google us english/i;
+const MALE = /\bmale\b|david|mark|guy|ryan|george|daniel|james|christopher|eric|roger|thomas|alex|fred/i;
+
+type Cast = { voice: SpeechSynthesisVoice | null; pitch: number };
+let cast: Record<Voice, Cast> | null = null;
+
+// Browsers fill the voice list asynchronously, so the first call can see none.
+function voices(): Promise<SpeechSynthesisVoice[]> {
+  const now = speechSynthesis.getVoices();
+  if (now.length) return Promise.resolve(now);
+  return new Promise((resolve) => {
+    const done = () => resolve(speechSynthesis.getVoices());
+    speechSynthesis.addEventListener("voiceschanged", done, { once: true });
+    setTimeout(done, 2000);
+  });
+}
+
+async function castVoices(): Promise<Record<Voice, Cast>> {
+  if (cast) return cast;
+  const english = (await voices()).filter((item) => /^en/i.test(item.lang));
+  const female = english.find((item) => FEMALE.test(item.name) && !MALE.test(item.name.replace(/female/i, "")));
+  const male = english.find((item) => MALE.test(item.name) && !/female/i.test(item.name));
+  const any = english[0] ?? null;
+  const picked = {
+    jane: { voice: female ?? any, pitch: female ? 1 : 1.4 },
+    player: { voice: male ?? any, pitch: male ? 0.9 : 0.6 },
+  };
+  if (english.length) cast = picked;
+  return picked;
+}
+
+async function fallback(text: string, voice: Voice): Promise<void> {
+  if (!("speechSynthesis" in window)) return;
+  const role = (await castVoices())[voice];
   return new Promise((resolve) => {
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.96;
-    const voices = speechSynthesis.getVoices();
-    const english = (name: RegExp) => voices.find((item) => /^en/i.test(item.lang) && name.test(item.name));
-    if (voice === "player") {
-      const male = english(/david|mark|guy|ryan|george|daniel|james|male/i);
-      utter.voice = male ?? voices.find((item) => /^en/i.test(item.lang)) ?? null;
-      utter.pitch = male ? 0.92 : 0.72;
-    } else {
-      utter.voice =
-        english(/female|zira|samantha|jenny|libby|aria/i) ?? voices.find((item) => /^en/i.test(item.lang)) ?? null;
-      utter.pitch = 0.9;
-    }
+    utter.voice = role.voice;
+    utter.pitch = role.pitch;
     utter.onend = () => resolve();
     utter.onerror = () => resolve();
     speechSynthesis.speak(utter);
@@ -50,12 +73,14 @@ function play(url: string): Promise<void> {
 export function createSpeaker() {
   const queue: { text: string; voice: Voice }[] = [];
   let busy = false;
+  let piper = true;
 
   async function pump() {
     if (busy || queue.length === 0) return;
     busy = true;
     const item = queue.shift()!;
     try {
+      if (!piper) throw new Error("piper off");
       const response = await fetch("/api/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,6 +91,7 @@ export function createSpeaker() {
       await play(url);
       URL.revokeObjectURL(url);
     } catch {
+      piper = false;
       await fallback(item.text, item.voice);
     }
     busy = false;
