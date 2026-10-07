@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { replyTo, type TalkContext } from "./ask";
 import { createLedger } from "./ledger";
+import { arrivalBrief } from "./lines";
 
 function ctx(seed = 7): TalkContext {
   return {
@@ -16,7 +17,7 @@ function ctx(seed = 7): TalkContext {
 describe("Jane's local answers", () => {
   it("answers the opening books without a model", () => {
     const talk = ctx();
-    expect(replyTo("what do the greens want", talk).text).toContain("fentanyl");
+    expect(replyTo("what do the greens want", talk).text).toContain(talk.ledger.green.name);
     expect(replyTo("blue", talk).text).toContain("Thy Flesh Consumed");
     expect(replyTo("how much money do I have", talk).text).toContain("$500");
     expect(replyTo("who are you", talk).intent).toBe("local");
@@ -57,6 +58,18 @@ describe("Jane's local answers", () => {
     expect(replyTo("what is fentanyl", talk).text.toLowerCase()).toContain("numb");
     expect(replyTo("how do I make thy flesh consumed", talk).text.toLowerCase()).toContain("don't hand out");
     expect(replyTo("what do the rats eat", talk).text).toContain("Hood");
+  });
+
+  it("briefs a first meeting in sentences", () => {
+    const ledger = createLedger(3);
+    const line = arrivalBrief(ledger.green, ledger.blue);
+    expect(line).toContain("I'm Jane");
+    expect(line).toContain(ledger.green.name);
+    expect(line).toContain("stocktail");
+    expect(line).toContain("green counter");
+    expect(line).toContain("Thy Flesh Consumed");
+    expect(line).toContain("blue counter");
+    expect(line).not.toMatch(/Green\s+\d/);
   });
 
   it("sends an open question to the model", () => {

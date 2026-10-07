@@ -14,10 +14,14 @@ const TOUCH = PAD_RADIUS + 0.002;
 const UNBLOCK = PAD_RADIUS + 0.012;
 const FIST_RADIUS = BEAKER_RADIUS * 1.15;
 const NEAR = 0.12;
-// How close each hand's palm or a fingertip has to be to a large vessel for F to carry it.
-const PAIR_TOUCH = 0.014;
-// Hands have to come from opposite sides, a bit past a right angle.
-const PAIR_OPPOSE = -0.15;
+// Palm centres sit back inside the hand, so a face that is on the glass can be a few
+// centimetres out by this measure. Fingertips are closer. Deep overlap is rejected below.
+const PAIR_TOUCH = 0.038;
+// Outward directions at the two contacts. 1 is the same face, 0 is a right angle,
+// -1 is opposite. Front and side is how a pot is actually picked up; both on one face is not.
+const PAIR_OPPOSE = 0.45;
+// A sample this far inside the cylinder is through the wall, not a hand resting on it.
+const PAIR_SUNK = 0.02;
 // Centre of the palm pad, in the hand bone's frame.
 const PALM = new THREE.Vector3(0, 0.045, 0);
 // The bench pushes up on a beaker the whole time it is sitting there. That contact
@@ -100,8 +104,8 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
     else grip.age += dt;
   }
 
-  // A large beaker between the palms is carried by the same joint as a pinch.
-  // Squeezing it between the hands is what sends it flying.
+  // The left hand has been pressing in. Once both hands are on the glass, the same
+  // joint that pinches a beaker takes the pot's weight. Squeezing alone is what sends it flying.
   if (hands.left.raised && hands.pair > 0.65 && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = betweenHands(hands, hold, beakers);
     if (beaker) {
@@ -330,16 +334,18 @@ function handGap(arm: Arm, beaker: Beaker, side: THREE.Vector3) {
   arm.hand.getWorldPosition(handPos);
   arm.hand.getWorldQuaternion(handQuat);
   let best = Infinity;
+  let through = false;
   const test = (sample: THREE.Vector3) => {
     const gap = cylinderGap(sample, beaker);
-    // A point in the cavity is a large negative gap, closer than the wall. That is the
-    // hand through the glass, not a grip on it. A few millimetres of overlap still counts.
-    if (gap < -0.008) return;
+    // The open mouth is a large negative gap. Ignore it. A sample just inside the
+    // wall means the hand has gone through the glass, so this is not a grip yet.
+    if (gap < -PAIR_SUNK && gap > -0.055) through = true;
+    if (gap < -0.01) return;
     if (gap < best && radial(sample, beaker, side)) best = gap;
   };
   test(point.copy(PALM).applyQuaternion(handQuat).add(handPos));
   for (const pad of arm.pads) test(pad.bone.getWorldPosition(point));
-  return best;
+  return through ? Infinity : best;
 }
 
 // Thumb on one side of the cylinder, a finger on the other. The anchor is the

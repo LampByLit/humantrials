@@ -44,49 +44,58 @@ type Step =
   | { op: "vanish"; beaker: Beaker }
   | { op: "bring"; fill: Fill; litres: number; line: string; phase: "init" | "out" | "back"; beaker: Beaker | null; x: number; z: number }
   | { op: "place"; beaker: Beaker; x: number; z: number; line: string }
+  | { op: "nest"; index: number; age: number; from: THREE.Vector3 | null; line: string }
   | { op: "revive"; index: number; line: string }
   | { op: "door"; open: boolean }
   | { op: "show" }
-  | { op: "stay" }
+  | { op: "stay"; idle: number; greeted: boolean }
   | { op: "speak"; text: string }
   | { op: "report"; faction: Faction; samples: Sample[] }
   | { op: "hide" };
 
 type Watch = { left: number | null; queued: boolean };
 
-type Limb = { bone: THREE.Bone; rest: THREE.Quaternion; side: number; kind: "up" | "low" | "arm" };
+type Part = "up" | "low" | "foot" | "arm" | "fore" | "hips" | "spine";
+type Limb = { bone: THREE.Bone; rest: THREE.Quaternion; side: number; part: Part };
 
 const hand = new THREE.Vector3();
+const leftHand = new THREE.Vector3();
+const rightHand = new THREE.Vector3();
 const swingQ = new THREE.Quaternion();
-const swingAxis = new THREE.Vector3(1, 0, 0);
+const axisX = new THREE.Vector3(1, 0, 0);
+const axisY = new THREE.Vector3(0, 1, 0);
+const axisZ = new THREE.Vector3(0, 0, 1);
+
+function sideOf(name: string) {
+  // GLTFLoader strips dots from node names, so "UpLeg.L_02" arrives as "UpLegL_02".
+  if (name.includes(".L") || /L_/.test(name)) return 1;
+  if (name.includes(".R") || /R_/.test(name)) return -1;
+  return 0;
+}
+
+function partOf(name: string): { part: Part; side: number } | null {
+  if (name.startsWith("Hips")) return { part: "hips", side: 0 };
+  if (name.startsWith("Spine2")) return { part: "spine", side: 0 };
+  const side = sideOf(name);
+  if (!side) return null;
+  if (name.includes("UpLeg")) return { part: "up", side };
+  if (name.includes("Foot")) return { part: "foot", side };
+  if (name.includes("Leg")) return { part: "low", side };
+  if (name.includes("ForeArm")) return { part: "fore", side };
+  if (name.includes("Arm") && !name.includes("Shoulder") && !name.includes("Hand")) return { part: "arm", side };
+  return null;
+}
 
 function limbsOf(root: THREE.Object3D): Limb[] {
   const limbs: Limb[] = [];
   root.traverse((object) => {
     const bone = object as THREE.Bone;
     if (!bone.isBone) return;
-    const side = bone.name.includes(".L") ? 1 : bone.name.includes(".R") ? -1 : 0;
-    if (!side) return;
-    let kind: Limb["kind"] | null = null;
-    if (bone.name.includes("UpLeg")) kind = "up";
-    else if (bone.name.includes("Leg") && !bone.name.includes("UpLeg")) kind = "low";
-    else if (bone.name.includes("Arm") && !bone.name.includes("Fore") && !bone.name.includes("Shoulder") && !bone.name.includes("Hand")) kind = "arm";
-    if (!kind) return;
-    limbs.push({ bone, rest: bone.quaternion.clone(), side, kind });
+    const found = partOf(bone.name);
+    if (!found) return;
+    limbs.push({ bone, rest: bone.quaternion.clone(), side: found.side, part: found.part });
   });
   return limbs;
-}
-
-function poseLimbs(limbs: Limb[], phase: number, moving: boolean) {
-  const swing = moving ? Math.sin(phase) : 0;
-  for (const limb of limbs) {
-    let angle = 0;
-    if (limb.kind === "up") angle = swing * 0.5 * limb.side;
-    else if (limb.kind === "low") angle = Math.max(0, -swing * limb.side) * 0.65;
-    else angle = -swing * 0.35 * limb.side;
-    swingQ.setFromAxisAngle(swingAxis, angle);
-    limb.bone.quaternion.copy(limb.rest).multiply(swingQ);
-  }
 }
 
 export function createWalker(
@@ -99,7 +108,11 @@ export function createWalker(
     speak: (text: string) => void;
     report: (faction: Faction, samples: Sample[]) => void;
     revive: (index: number) => void;
+    conceal: (index: number) => void;
+    tote: (index: number) => THREE.Object3D;
+    release: () => void;
     spot: (index: number) => { x: number; z: number };
+    greet: () => void;
   },
 ) {
   const anchor = new THREE.Group();
@@ -118,6 +131,19 @@ export function createWalker(
   anchor.visible = false;
   scene.add(anchor);
   const limbs = limbsOf(model);
+  let handL: THREE.Bone | null = null;
+  let handR: THREE.Bone | null = null;
+  model.traverse((object) => {
+    const bone = object as THREE.Bone;
+    if (!bone.isBone) return;
+    if (/^Hand\.?L_/.test(bone.name)) handL = bone;
+    else if (/^Hand\.?R_/.test(bone.name)) handR = bone;
+  });
+  const footL = limbs.find((limb) => limb.part === "foot" && limb.side === 1)?.bone ?? null;
+  const footR = limbs.find((limb) => limb.part === "foot" && limb.side === -1)?.bone ?? null;
+  model.updateMatrixWorld(true);
+  const sole =
+    footL && footR ? Math.min(footL.getWorldPosition(leftHand).y, footR.getWorldPosition(rightHand).y) : 0.02;
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(OUTSIDE.x, -8, OUTSIDE.z));
   const collider = world.createCollider(RAPIER.ColliderDesc.capsule(0.5, 0.18).setCollisionGroups(JANE_GROUPS), body);
@@ -132,8 +158,14 @@ export function createWalker(
   };
   let moving = false;
   let phase = 0;
+  let gait = 0;
+  let hold = 0;
   let clock = 0;
   let onCall = false;
+  let parcel: THREE.Object3D | null = null;
+  const nestAt = new THREE.Vector3();
+  // One full stride is about 0.62m on this figure, so the steps keep up with her walk.
+  const cadence = (Math.PI * 2 * janeConfig.walkSpeed) / 0.62;
 
   function show() {
     anchor.visible = true;
@@ -182,6 +214,10 @@ export function createWalker(
     anchor.visible = false;
     collider.setEnabled(false);
     moving = false;
+    if (parcel) {
+      hooks.release();
+      parcel = null;
+    }
   }
 
   function syncBody() {
@@ -212,14 +248,104 @@ export function createWalker(
     return false;
   }
 
-  function handPoint() {
+  function bend(part: Part, side: number, axis: THREE.Vector3, angle: number) {
+    if (Math.abs(angle) < 1e-4) return;
+    swingQ.setFromAxisAngle(axis, angle);
+    for (const limb of limbs) {
+      if (limb.part !== part || limb.side !== side) continue;
+      limb.bone.quaternion.multiply(swingQ);
+    }
+  }
+
+  function bulky() {
+    if (parcel) return true;
+    for (const beaker of carried) if (beaker.radius >= 0.055) return true;
+    return false;
+  }
+
+  // Local X swings the legs forward. Local Z swings the arms forward: on this rig
+  // the upper arm's local X points ahead, so an X twist only flaps the arms out.
+  function poseFigure() {
+    for (const limb of limbs) limb.bone.quaternion.copy(limb.rest);
+    const s = Math.sin(phase) * gait;
+    const tuckL = Math.max(0, Math.cos(phase)) * gait;
+    const tuckR = Math.max(0, -Math.cos(phase)) * gait;
+    bend("up", 1, axisX, s * 0.36);
+    bend("up", -1, axisX, -s * 0.36);
+    bend("low", 1, axisX, -tuckL * 0.48);
+    bend("low", -1, axisX, -tuckR * 0.48);
+    bend("foot", 1, axisX, -s * 0.2 + tuckL * 0.35);
+    bend("foot", -1, axisX, s * 0.2 + tuckR * 0.35);
+    bend("hips", 0, axisY, -s * 0.06);
+    bend("spine", 0, axisY, s * 0.1);
+    bend("spine", 0, axisX, Math.sin(clock * 1.7) * 0.018);
+    const two = bulky();
+    const gripped = carried.size > 0 || parcel !== null;
+    for (const side of [1, -1] as const) {
+      let arm = -Math.sin(phase) * gait * 0.42;
+      let fore = (side > 0 ? -0.28 : 0.28) * gait;
+      if (gripped && (two || side < 0)) {
+        const carryArm = two ? side * 1.1 : -0.8;
+        const carryFore = two ? side * -0.4 : -0.1;
+        arm = arm * (1 - hold) + carryArm * hold;
+        fore = fore * (1 - hold) + carryFore * hold;
+      }
+      bend("arm", side, axisZ, arm);
+      bend("fore", side, axisZ, fore);
+    }
+  }
+
+  function present() {
+    poseFigure();
+    bob.position.y = 0;
+    model.updateMatrixWorld(true);
+    if (footL && footR) {
+      const low = Math.min(footL.getWorldPosition(leftHand).y, footR.getWorldPosition(rightHand).y);
+      bob.position.y = sole - low;
+    }
+    anchor.updateMatrixWorld(true);
+  }
+
+  function shift(out: THREE.Vector3, localX: number, localZ: number) {
     const yaw = anchor.rotation.y;
-    hand.set(
-      anchor.position.x + Math.cos(yaw) * 0.2 + Math.sin(yaw) * 0.16,
-      0.98,
-      anchor.position.z - Math.sin(yaw) * 0.2 + Math.cos(yaw) * 0.16,
-    );
+    out.x += localX * Math.cos(yaw) + localZ * Math.sin(yaw);
+    out.z += -localX * Math.sin(yaw) + localZ * Math.cos(yaw);
+  }
+
+  function gripAt(beaker: Beaker) {
+    if (!handL || !handR) {
+      hand.set(anchor.position.x, 0.98, anchor.position.z);
+      return hand;
+    }
+    if (beaker.radius >= 0.055) {
+      handL.getWorldPosition(leftHand);
+      handR.getWorldPosition(rightHand);
+      hand.addVectors(leftHand, rightHand).multiplyScalar(0.5);
+      shift(hand, 0, beaker.radius * 0.15);
+      hand.y -= beaker.height * 0.3;
+      return hand;
+    }
+    handR.getWorldPosition(hand);
+    shift(hand, 0.02, beaker.radius + 0.04);
+    hand.y += 0.02;
     return hand;
+  }
+
+  function handPoint(beaker: Beaker) {
+    present();
+    return gripAt(beaker);
+  }
+
+  function placeParcel() {
+    if (!parcel || !handL || !handR || steps[0]?.op === "nest") return;
+    handL.getWorldPosition(leftHand);
+    handR.getWorldPosition(rightHand);
+    parcel.position.addVectors(leftHand, rightHand).multiplyScalar(0.5);
+    shift(parcel.position, 0, 0.05);
+    parcel.position.y -= 0.04;
+    parcel.rotation.order = "YXZ";
+    parcel.rotation.y = anchor.rotation.y + Math.PI;
+    parcel.visible = anchor.visible;
   }
 
   function park(beaker: Beaker, x: number, y: number, z: number) {
@@ -234,7 +360,8 @@ export function createWalker(
     beaker.body.setGravityScale(0, true);
     for (let i = 0; i < beaker.body.numColliders(); i++) beaker.body.collider(i).setCollisionGroups(0);
     carried.add(beaker);
-    const at = handPoint();
+    hold = 1;
+    const at = handPoint(beaker);
     beaker.body.setTranslation({ x: at.x, y: at.y, z: at.z }, true);
     park(beaker, at.x, at.y, at.z);
   }
@@ -298,7 +425,7 @@ export function createWalker(
         { op: "wait", left: janeConfig.summonDelay },
         { op: "show" },
         ...enter(),
-        { op: "stay" },
+        { op: "stay", idle: 0, greeted: false },
       );
       return;
     }
@@ -317,8 +444,14 @@ export function createWalker(
       steps.push(...enter());
     }
     if (job.kind === "replace") {
+      parcel = hooks.tote(job.index);
+      hold = 1;
       const spot = hooks.spot(job.index);
-      steps.push({ op: "goto", x: spot.x, z: STAND }, { op: "revive", index: job.index, line: job.line }, ...leave());
+      steps.push(
+        { op: "goto", x: spot.x, z: STAND },
+        { op: "nest", index: job.index, age: 0, from: null, line: job.line },
+        ...leave(),
+      );
       return;
     }
     const found = scan(job.faction, held);
@@ -371,8 +504,14 @@ export function createWalker(
   let active: Faction | null = null;
 
   return {
-    update(dt: number, held: Set<Beaker>) {
+    update(dt: number, held: Set<Beaker>, talk: { speaking(): boolean; face: { x: number; z: number } | null }) {
+      const arriving = steps[0]?.op !== "stay" && steps.some((item) => item.op === "stay");
+      const pinned = talk.speaking() && !arriving;
+      if (pinned) moving = false;
       clock += dt;
+      phase += dt * (moving ? cadence : 0);
+      hold += (((carried.size > 0 || parcel !== null) ? 1 : 0) - hold) * (1 - Math.exp(-14 * dt));
+      gait += ((moving ? 1 : 0) - gait) * (1 - Math.exp(-8 * dt));
       for (const faction of ["green", "blue"] as const) {
         const station = faction === "green" ? STATIONS[1] : STATIONS[2];
         const occupied = beakers.some((beaker) => onCounter(beaker, station, held));
@@ -389,9 +528,7 @@ export function createWalker(
         }
       }
 
-      if (steps[0]?.op === "stay" && queue.length > 0) steps.shift();
-
-      if (steps.length === 0) {
+      if (steps.length === 0 && !talk.speaking()) {
         const job = pull();
         if (job) {
           active = job.kind === "collect" ? job.faction : null;
@@ -410,12 +547,17 @@ export function createWalker(
           continue;
         }
         if (step.op === "goto" || step.op === "haul") {
+          if (talk.speaking() && !steps.some((item) => item.op === "stay")) {
+            moving = false;
+            break;
+          }
           const target = step.op === "goto" ? step : step;
           if (!approach(target.x, target.z, dt)) break;
           steps.shift();
           continue;
         }
         if (step.op === "lift") {
+          moving = false;
           if (!beakers.includes(step.beaker)) {
             steps.shift();
             continue;
@@ -429,12 +571,11 @@ export function createWalker(
           }
           step.age += dt;
           const u = Math.min(1, step.age / 0.65);
-          const at = handPoint();
+          const at = handPoint(step.beaker);
           const x = step.from.x + (at.x - step.from.x) * u;
           const y = step.from.y + (at.y - step.from.y) * u;
           const z = step.from.z + (at.z - step.from.z) * u;
           park(step.beaker, x, y, z);
-          moving = false;
           if (u < 1) break;
           steps.shift();
           continue;
@@ -446,7 +587,23 @@ export function createWalker(
         }
         if (step.op === "stay") {
           moving = false;
-          break;
+          if (!step.greeted) {
+            step.greeted = true;
+            hooks.greet();
+          }
+          if (talk.speaking()) {
+            step.idle = 0;
+            break;
+          }
+          if (queue.length > 0) {
+            steps.shift();
+            continue;
+          }
+          step.idle += dt;
+          if (step.idle < janeConfig.linger) break;
+          steps.shift();
+          steps.unshift(...leave());
+          continue;
         }
         if (step.op === "show") {
           show();
@@ -488,6 +645,38 @@ export function createWalker(
           steps.shift();
           continue;
         }
+        if (step.op === "nest") {
+          moving = false;
+          const spot = hooks.spot(step.index);
+          if (!step.from) {
+            hooks.conceal(step.index);
+            present();
+            if (parcel && handL && handR) {
+              handL.getWorldPosition(leftHand);
+              handR.getWorldPosition(rightHand);
+              parcel.position.addVectors(leftHand, rightHand).multiplyScalar(0.5);
+              shift(parcel.position, 0, 0.05);
+              parcel.position.y -= 0.04;
+            }
+            step.from = parcel ? parcel.position.clone() : new THREE.Vector3(spot.x, BENCH_SURFACE + 0.02, spot.z);
+          }
+          step.age += dt;
+          const u = Math.min(1, step.age / 0.45);
+          if (parcel && step.from) {
+            nestAt.set(spot.x, BENCH_SURFACE + 0.02, spot.z);
+            parcel.position.lerpVectors(step.from, nestAt, u);
+            parcel.rotation.order = "YXZ";
+            parcel.rotation.y = anchor.rotation.y + Math.PI;
+            parcel.visible = true;
+          }
+          if (u < 1) break;
+          hooks.revive(step.index);
+          hooks.speak(step.line);
+          hooks.release();
+          parcel = null;
+          steps.shift();
+          continue;
+        }
         if (step.op === "revive") {
           hooks.revive(step.index);
           hooks.speak(step.line);
@@ -517,15 +706,16 @@ export function createWalker(
         }
       }
 
+      if (talk.speaking() && steps[0]?.op !== "stay" && !steps.some((item) => item.op === "stay")) moving = false;
+      if (talk.face) look(talk.face.x - anchor.position.x, talk.face.z - anchor.position.z);
+      present();
       const lifting = steps[0]?.op === "lift" ? steps[0].beaker : null;
       for (const beaker of carried) {
         if (beaker === lifting) continue;
-        const at = handPoint();
+        const at = gripAt(beaker);
         park(beaker, at.x, at.y, at.z);
       }
-      phase += dt * (moving ? 9 : 0);
-      bob.position.y = moving ? Math.abs(Math.sin(phase)) * 0.03 : Math.sin(clock * 1.6) * 0.006;
-      poseLimbs(limbs, phase, moving);
+      placeParcel();
       syncBody();
     },
     enqueue(job: JaneJob) {
@@ -546,7 +736,7 @@ export function createWalker(
       return { x: anchor.position.x, y: 1.45, z: anchor.position.z };
     },
     carrying() {
-      return carried.size > 0;
+      return carried.size > 0 || parcel !== null;
     },
     rush(faction: Faction) {
       watch[faction].left = 0.05;

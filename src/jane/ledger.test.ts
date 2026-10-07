@@ -1,27 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { analogsOf } from "../sim/analogs";
-import { acceptReward, createLedger, submitSamples, tryOrder } from "./ledger";
+import { isElemental } from "../sim/recipe";
+import { acceptReward, createLedger, MASS_PER_LITRE, submitSamples, tryOrder } from "./ledger";
+import { priceOf } from "./prices";
+import { stocktails } from "./stocktails";
 
 describe("ledger", () => {
-  it("pays a shelf litre of fentanyl and opens the next green order", () => {
+  it("opens on a stocktail and rolls another after a shelf litre", () => {
     const ledger = createLedger(1);
-    const result = submitSamples(ledger, "green", [{ hex: "#6600FF", mass: 10, volume: 0.001 }]);
-    expect(result.pay).toBe(1000);
-    expect(ledger.credits).toBe(1500);
+    const opening = ledger.green.hex;
+    expect(stocktails().some((item) => item.hex === opening)).toBe(true);
+    for (const item of stocktails()) expect(isElemental(item.hex)).toBe(false);
+    const price = priceOf(opening);
+    const result = submitSamples(ledger, "green", [{ hex: opening, mass: MASS_PER_LITRE, volume: 0.001 }]);
+    expect(result.pay).toBe(price);
+    expect(ledger.credits).toBe(500 + price);
     expect(ledger.green.generation).toBe(1);
-    expect(ledger.green.hex).not.toBe("#6600FF");
+    expect(ledger.green.hex).not.toBe(opening);
+    expect(stocktails().some((item) => item.hex === ledger.green.hex)).toBe(true);
     expect(ledger.green.reason.length).toBeGreaterThan(20);
     expect(result.line).toContain(ledger.green.name);
+    expect(result.line.toLowerCase()).toContain("closes the sale");
   });
 
-  it("pays a fentanyl analog on a scale and leaves the order open", () => {
+  it("pays a stocktail analog on a scale and leaves the order open", () => {
     const ledger = createLedger(2);
-    const cousin = analogsOf("#6600FF")[0];
-    const result = submitSamples(ledger, "green", [{ hex: cousin.hex, mass: 10, volume: 0.001 }]);
-    expect(result.pay).toBeCloseTo(cousin.scale * 1000, 1);
+    const price = ledger.green.pricePerLitre;
+    const cousin = analogsOf(ledger.green.hex)[0];
+    const result = submitSamples(ledger, "green", [{ hex: cousin.hex, mass: MASS_PER_LITRE, volume: 0.001 }]);
+    expect(result.pay).toBeCloseTo(cousin.scale * price, 1);
     expect(ledger.green.filled).toBeCloseTo(cousin.scale, 5);
     expect(ledger.green.generation).toBe(0);
     expect(result.line.toLowerCase()).toContain("cousin");
+    expect(result.line.toLowerCase()).toContain("still want");
+  });
+
+  it("pays only the requested litre when the glass runs over, and counts a thin pour short", () => {
+    const over = createLedger(8);
+    const price = over.green.pricePerLitre;
+    const extra = submitSamples(over, "green", [{ hex: over.green.hex, mass: MASS_PER_LITRE * 2, volume: 0.002 }]);
+    expect(extra.pay).toBe(price);
+    expect(over.green.generation).toBe(1);
+    expect(extra.line.toLowerCase()).toContain("more than the slip");
+    const thin = createLedger(9);
+    const half = submitSamples(thin, "green", [{ hex: thin.green.hex, mass: MASS_PER_LITRE * 0.5, volume: 0.001 }]);
+    expect(half.pay).toBeCloseTo(thin.green.pricePerLitre * 0.5, 1);
+    expect(thin.green.generation).toBe(0);
+    expect(thin.green.filled).toBeCloseTo(0.5, 5);
+    expect(half.line.toLowerCase()).toContain("thin");
+    expect(half.line.toLowerCase()).toContain("still want");
   });
 
   it("refuses water and the wrong color", () => {

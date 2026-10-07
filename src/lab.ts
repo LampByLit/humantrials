@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
-import { milk, solutionFromHex, STOCK_CONCENTRATION, toChem, water, type Solution } from "./fluid/solution";
-import { chemLabel, latinName, namedColor } from "./sim/colorName";
+import { blankReadout, substanceReadout, type Readout } from "./fluid/readout";
+import { milk, solutionFromHex, STOCK_CONCENTRATION, water, type Solution } from "./fluid/solution";
+import { namedColor } from "./sim/colorName";
 import { drawFood } from "./sim/food";
 import { drawStock, type HueSlot } from "./sim/labStock";
 import { createRng } from "./sim/rng";
@@ -143,8 +144,24 @@ function largePots(hexes: number[]): Stock[] {
   return hexes.map((hex) => ({ size: POT_L, hex, fill: 0.65, exact: true }));
 }
 
-// One bench per hue stem, in wheel order, plus a second bench for the crowded stems.
-// `stem` is the 30° bin used by latinName.
+// Every vessel the lab has, smallest to largest. A supply bench fills the aisle row
+// with water and leaves the same sizes empty behind it.
+const SUPPLY: Size[] = [MEDIUM, LARGE, TRAY, POT_S, POT_M, POT_L, POT_XL];
+
+function supply(x: number, z: number, facing: 1 | -1): Bench {
+  return {
+    label: "Water",
+    x,
+    z,
+    facing,
+    width: 2.4,
+    items: SUPPLY.map((size) => ({ size, fill: size.flange ? 0.7 : 0.8 })),
+    back: empties(SUPPLY),
+    backRow: POT_BACK,
+  };
+}
+
+// One bench per hue stem, in wheel order. `stem` is the 30° bin used by latinName.
 const HUE_TABLES: (HueSlot & { x: number; z: number; facing: 1 | -1; width?: number })[] = [
   { stem: 0, x: -7.5, z: -1.8, facing: 1, front: 7, back: 6 },
   { stem: 1, x: -2.5, z: -1.8, facing: 1, front: 7, back: 6 },
@@ -158,10 +175,6 @@ const HUE_TABLES: (HueSlot & { x: number; z: number; facing: 1 | -1; width?: num
   { stem: 9, x: 5, z: 2, facing: -1, front: 7, back: 6 },
   { stem: 10, x: -6, z: -6.4, facing: 1, front: 7, back: 6 },
   { stem: 11, x: -2, z: -6.4, facing: 1, width: 3.4, front: 10, back: 8 },
-  { stem: 0, x: 6.2, z: -6.4, facing: 1, front: 7, back: 6 },
-  { stem: 1, x: -6, z: 5.4, facing: -1, front: 7, back: 6 },
-  { stem: 2, x: 2.4, z: 5.4, facing: -1, front: 7, back: 6 },
-  { stem: 6, x: 5.6, z: 5.4, facing: -1, front: 7, back: 6 },
 ];
 
 // Large pots need a deeper second row than beakers. Centres stay on the bench.
@@ -179,7 +192,7 @@ function benches(seed: number): Bench[] {
   const drawn = drawStock(createRng(seed), HUE_TABLES, ELEMENTAL_POTS);
   const food = drawFood(createRng(seed + 1)).map((hex) => parseInt(hex.slice(1), 16));
   const hues: Bench[] = HUE_TABLES.map((slot, index) => ({
-    label: HUE_NAMES[slot.stem] + (HUE_TABLES.findIndex((other) => other.stem === slot.stem) < index ? " II" : ""),
+    label: HUE_NAMES[slot.stem],
     x: slot.x,
     z: slot.z,
     facing: slot.facing,
@@ -202,6 +215,10 @@ function benches(seed: number): Bench[] {
     { label: "Water", x: -5, z: -1.8, facing: 1, items: [...waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM], 0.8), { size: TRAY, fill: 0 }], back: waters([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
     { label: "Glassware", x: -2.5, z: 2, facing: -1, items: empties([TRAY, LARGE, MEDIUM, MEDIUM, TRAY]), back: empties([MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM, MEDIUM]) },
     { label: "Pots", x: -2, z: 5.4, facing: -1, width: 3.4, items: [{ size: POT_S, fill: 0.7 }, { size: POT_S, fill: 0 }, { size: POT_M, fill: 0.7 }, { size: POT_M, fill: 0 }, { size: POT_L, fill: 0.7 }, { size: POT_L, fill: 0 }, { size: POT_XL, fill: 0.7 }, { size: POT_XL, fill: 0 }] },
+    supply(-6, 5.4, -1),
+    supply(1.9, 5.4, -1),
+    supply(5.5, 5.4, -1),
+    supply(6.8, -6.4, 1),
     {
       label: "Catalog",
       x: -3.2,
@@ -793,22 +810,56 @@ export function containVessels(beakers: Beaker[], world: RAPIER.World, held: Bea
 export let intake: Beaker | null = null;
 
 const readout = document.createElement("canvas");
-readout.width = 512;
-readout.height = 256;
+readout.width = 1024;
+readout.height = 768;
 const readoutCtx = readout.getContext("2d")!;
 let readoutMap: THREE.CanvasTexture | null = null;
 
-function paintReadout(nomen: string, name: string, hex: string) {
+const LABEL = "#1f8f48";
+const INK = "#39ff7a";
+
+function paintSpec(spec: { label: string; value: string }, x: number, y: number, valueX: number) {
+  const ctx = readoutCtx;
+  ctx.fillStyle = LABEL;
+  ctx.textAlign = "left";
+  ctx.fillText(spec.label, x, y);
+  ctx.fillStyle = INK;
+  ctx.textAlign = "right";
+  ctx.fillText(spec.value, valueX, y);
+}
+
+function paintReadout(read: Readout) {
   const ctx = readoutCtx;
   ctx.fillStyle = "#031208";
   ctx.fillRect(0, 0, readout.width, readout.height);
-  ctx.fillStyle = "#39ff7a";
-  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = "32px Consolas, monospace";
-  ctx.fillText(nomen, 256, 78, 480);
-  ctx.fillText(name, 256, 128, 480);
-  ctx.fillText(hex, 256, 178, 480);
+  ctx.textAlign = "left";
+  ctx.fillStyle = INK;
+  ctx.font = "52px Consolas, monospace";
+  ctx.fillText(read.title, 40, 52, 940);
+  ctx.font = "30px Consolas, monospace";
+  ctx.fillText(read.latin, 40, 108, 940);
+  ctx.fillText(read.hex, 40, 154, 820);
+  if (read.hex.startsWith("#")) {
+    ctx.fillStyle = read.hex;
+    ctx.fillRect(948, 136, 36, 36);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(948, 136, 36, 36);
+  }
+  ctx.fillStyle = LABEL;
+  ctx.font = "22px Consolas, monospace";
+  ctx.fillText("SOLUTE", 40, 214);
+  ctx.fillText("LIQUID", 540, 214);
+  ctx.fillStyle = "#0c3d22";
+  ctx.fillRect(40, 236, 944, 2);
+  ctx.font = "30px Consolas, monospace";
+  const rows = Math.max(read.solute.length, read.liquid.length);
+  for (let i = 0; i < rows; i++) {
+    const y = 278 + i * 52;
+    if (read.solute[i]) paintSpec(read.solute[i], 40, y, 490);
+    if (read.liquid[i]) paintSpec(read.liquid[i], 540, y, 984);
+  }
   if (readoutMap) readoutMap.needsUpdate = true;
 }
 
@@ -900,10 +951,11 @@ function addScreen(parent: THREE.Scene, box: THREE.Box3, direction: THREE.Vector
   const center = new THREE.Vector3();
   box.getSize(size);
   box.getCenter(center);
-  const width = direction.x !== 0 ? size.z : size.x;
-  const height = size.y;
+  const faceW = direction.x !== 0 ? size.z : size.x;
+  const width = Math.min(faceW * 0.88, 0.5);
+  const height = Math.min(size.y * 0.55, width * 0.75);
   const screen = new THREE.Mesh(
-    new THREE.PlaneGeometry(Math.min(width * 0.72, 0.42), Math.min(height * 0.28, 0.24)),
+    new THREE.PlaneGeometry(width, height),
     new THREE.MeshBasicMaterial({ map }),
   );
   screen.position.copy(center).addScaledVector(direction, 0.012);
@@ -912,20 +964,35 @@ function addScreen(parent: THREE.Scene, box: THREE.Box3, direction: THREE.Vector
   parent.add(screen);
 }
 
+// Full width of the broad side, tall enough for the readout, flush with the top of that face.
+function addBroadScreen(parent: THREE.Scene, box: THREE.Box3, direction: THREE.Vector3, map: THREE.Texture) {
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const width = direction.x !== 0 ? size.z : size.x;
+  const height = Math.min(size.y, width * (readout.height / readout.width));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map }));
+  screen.position.copy(center);
+  screen.position.y = box.max.y - height / 2;
+  screen.position.addScaledVector(direction, 0.012);
+  screen.lookAt(screen.position.clone().add(direction));
+  screen.renderOrder = 2;
+  parent.add(screen);
+}
+
 // Empties the well after copying the pour onto the screen, so the next pour replaces it.
 export function readIntake() {
   const beaker = intake;
   if (!beaker || beaker.solution.volume <= 1e-7) return;
-  const sample = toChem(beaker.solution);
-  const named = sample.mass > 1e-8;
-  paintReadout(named ? latinName(sample.hex) : "—", named ? chemLabel(sample.hex) : "water", named ? sample.hex : "—");
+  paintReadout(substanceReadout(beaker.solution));
   beaker.solution.volume = 0;
   beaker.solution.mass = 0;
   beaker.solution.cloud = 0;
 }
 
 // The retro cabinet stands on the east side, facing the aisle. A well in the top
-// catches a pour; the screen on the near face shows the last one.
+// catches a pour. The near face and the broad side show the last one.
 export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: THREE.Object3D, beakers: Beaker[]) {
   const model = source.clone(true);
   model.rotation.y = -Math.PI / 2;
@@ -993,13 +1060,13 @@ export function mountAnalyzer(scene: THREE.Scene, world: RAPIER.World, source: T
   addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.min.z + thick / 2, false);
   addBox(scene, world, shellInvisible(), spanX, height, thick, cx, midY, fitted.max.z - thick / 2, false);
 
-  paintReadout("—", "—", "—");
+  paintReadout(blankReadout());
   readoutMap = new THREE.CanvasTexture(readout);
   readoutMap.colorSpace = THREE.SRGBColorSpace;
   const towardAisle = new THREE.Vector3(-1, 0, 0);
-  const side = new THREE.Vector3(0, 0, 1);
+  const broadSide = new THREE.Vector3(0, 0, 1);
   addScreen(scene, faceBox(model, towardAisle), towardAisle, readoutMap);
-  addScreen(scene, faceBox(model, side), side, readoutMap);
+  addBroadScreen(scene, faceBox(model, broadSide), broadSide, readoutMap);
   return model;
 }
 

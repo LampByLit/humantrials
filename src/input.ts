@@ -21,6 +21,14 @@ export const input = {
   run: (): boolean => input.keys.has("AltLeft") || input.keys.has("AltRight"),
 };
 
+let regainLook = () => {};
+
+// Pointer lock cannot be taken back from the Escape key. Ask, and if the browser
+// refuses, the next click on the lab takes it.
+export function resumeLook() {
+  regainLook();
+}
+
 export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
   const setLocked = (locked: boolean) => {
     input.locked = locked;
@@ -35,7 +43,22 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
     }
   };
 
+  const showLook = () => {
+    prompt.textContent = "Click to look";
+    prompt.classList.remove("hidden");
+  };
+
+  regainLook = () => {
+    input.console = false;
+    const pending = canvas.requestPointerLock() as void | Promise<void>;
+    if (pending && typeof pending.then === "function") void pending.catch(() => showLook());
+  };
+
   let wasLocked = false;
+  document.addEventListener("pointerlockerror", () => {
+    if (input.playing && !input.console && document.pointerLockElement !== canvas) showLook();
+  });
+
   document.addEventListener("pointerlockchange", () => {
     const locked = document.pointerLockElement === canvas;
     input.locked = locked;
@@ -55,6 +78,7 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
       input.themeToggle = false;
       if (!input.console) {
         input.playing = false;
+        prompt.textContent = "Click to begin";
         prompt.classList.remove("hidden");
       }
     }
@@ -113,15 +137,18 @@ export function bindInput(canvas: HTMLCanvasElement, prompt: HTMLElement) {
 
   const onPress = (event: MouseEvent) => {
     if (event.button !== 0 && event.button !== 2) return;
-    if (input.console && event.target === canvas) {
-      input.console = false;
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      canvas.requestPointerLock();
-      return;
-    }
     if (!input.playing) {
       if (!input.ready || input.dead) return;
       input.playing = true;
+      prompt.classList.add("hidden");
+      canvas.requestPointerLock();
+      return;
+    }
+    if (!input.locked) {
+      if (event.button !== 0) return;
+      input.console = false;
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      window.dispatchEvent(new Event("resume-play"));
       prompt.classList.add("hidden");
       canvas.requestPointerLock();
       return;

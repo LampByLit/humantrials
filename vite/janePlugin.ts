@@ -31,17 +31,23 @@ function piperExe(root: string): string | null {
   return candidates.find((file) => existsSync(file)) ?? null;
 }
 
-function voice(root: string): { model: string; dir: string } | null {
-  const model = path.join(root, "tools", "piper", "en_US-lessac-medium.onnx");
-  if (!existsSync(model) || !existsSync(`${model}.json`)) return null;
-  return { model, dir: path.dirname(piperExe(root) ?? model) };
+const VOICES = {
+  jane: "en_US-lessac-medium.onnx",
+  player: "en_US-ryan-medium.onnx",
+} as const;
+
+function voice(root: string, who: keyof typeof VOICES): { model: string; dir: string } | null {
+  const exe = piperExe(root);
+  const model = path.join(root, "tools", "piper", VOICES[who]);
+  if (!exe || !existsSync(model) || !existsSync(`${model}.json`)) return null;
+  return { model, dir: path.dirname(exe) };
 }
 
-function speakWithPiper(root: string, text: string): Promise<Buffer> {
+function speakWithPiper(root: string, text: string, who: keyof typeof VOICES): Promise<Buffer> {
   const exe = piperExe(root);
-  const model = voice(root);
+  const model = voice(root, who);
   if (!exe || !model) return Promise.reject(new Error("piper missing"));
-  const file = path.join(tmpdir(), `jane-${createHash("sha1").update(text).digest("hex")}.wav`);
+  const file = path.join(tmpdir(), `speak-${createHash("sha1").update(`${who}\0${text}`).digest("hex")}.wav`);
   return new Promise((resolve, reject) => {
     const child = spawn(exe, ["--model", model.model, "--output_file", file], { cwd: model.dir });
     let error = "";
@@ -120,17 +126,23 @@ export function janePlugin(apiKey: string): Plugin {
           return;
         }
         try {
-          const payload = JSON.parse(await readBody(req)) as { text?: string; history?: Turn[]; state?: string };
+          const payload = JSON.parse(await readBody(req)) as {
+            text?: string;
+            history?: Turn[];
+            state?: string;
+            voice?: string;
+          };
           const text = (payload.text ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
           if (!text) {
             send(res, 400, JSON.stringify({ error: "empty" }));
             return;
           }
           if (req.url === "/api/speak") {
-            const key = createHash("sha1").update(text).digest("hex");
+            const who = payload.voice === "player" ? "player" : "jane";
+            const key = createHash("sha1").update(`${who}\0${text}`).digest("hex");
             let wav = cache.get(key);
             if (!wav) {
-              wav = await speakWithPiper(process.cwd(), text);
+              wav = await speakWithPiper(process.cwd(), text, who);
               if (cache.size > 40) cache.clear();
               cache.set(key, wav);
             }

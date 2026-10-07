@@ -6,22 +6,22 @@ type Food = { hex: string; nutrients: Nutrients; analogs: readonly string[] };
 
 // Nutrients per unit of solute mass. A 10mL stock sip is 0.1 mass, so a medium beaker of a
 // food (about 2.3) restores its main nutrient from empty. The eight nearest analogs of each
-// food carry their own names; none of them is an established color name.
+// food carry their own names. Leaf and Dandelion also name colors; the food hex wins when you say them.
 const FOODS: readonly Food[] = [
   {
     hex: "#A0705A",
     nutrients: { energy: 0.15, protein: 0.45, vitamins: 0.03 },
-    analogs: ["Grubmeal", "Loamcake", "Siltgrub", "Castpaste", "Burrowmash", "Rootworm", "Mudlarva", "Clodmeal"],
+    analogs: ["Grubs", "Loamcake", "Siltgrubs", "Bug Paste", "Burrowmash", "Rootworm", "Mudlarva", "Clodmeal"],
   },
   {
     hex: "#2E5E3A",
     nutrients: { energy: 0.08, protein: 0.06, vitamins: 0.45 },
-    analogs: ["Wrackpulp", "Tidecress", "Saltfrond", "Brinecurd", "Driftleaf", "Shoalweed", "Deepwrack", "Bladdermash"],
+    analogs: ["Wrackpulp", "Tidecress", "Saltfrond", "Brinecurd", "Driftleaf", "Shoalweed", "Deepwrack", "Kelps"],
   },
   {
     hex: "#7A1E2A",
     nutrients: { energy: 0.45, protein: 0.03, vitamins: 0.05 },
-    analogs: ["Tuberclot", "Marrowbeet", "Cellarbeet", "Mangelmash", "Rootclot", "Sugarknob", "Gristbeet", "Darkmangel"],
+    analogs: ["Tuberclot", "Leaf", "Cellarbeet", "Mangelmash", "Rootclot", "Sugarknob", "Gristbeet", "Dandelion"],
   },
 ];
 
@@ -49,7 +49,7 @@ export function foodName(hex: string): string | null {
   return names.get(hex.toUpperCase()) ?? null;
 }
 
-/** Hex of a named food analog such as Grubmeal. */
+/** Hex of a named food analog such as Grubs. */
 export function foodHex(name: string): string | null {
   const key = name.trim().toLowerCase();
   for (const [hex, label] of names) if (label.toLowerCase() === key) return hex;

@@ -152,19 +152,20 @@ describe("catalog reactions", () => {
     expect(catalogDrive("#123456", "heart")).toBeNull();
   });
 
-  it("lets food move organs the same way no matter where the receptors sit", () => {
-    const dose = [{ hex: "#7A1E2A", mass: 1.4 }];
-    const left = evaluate([organ("heart", 10), organ("brain", 200), organ("liver", 40)], dose);
+  it("lets a meal sit in the blood without throwing the body", () => {
+    const dose = [{ hex: "#7A1E2A", mass: 2.3 }];
+    const organs = [organ("heart", 10), organ("brain", 200), organ("liver", 40)];
+    const left = evaluate(organs, dose);
     const right = evaluate([organ("heart", 180), organ("brain", 20), organ("liver", 300)], dose);
     expect(left.organs.map((item) => item.deflection)).toEqual(right.organs.map((item) => item.deflection));
-    expect(left.organs[0].deflection).toBeGreaterThan(config.symptoms.mild);
-    expect(left.organs[0].deflection).toBeLessThan(config.symptoms.severe);
-    const organs = [organ("heart", 0), organ("brain", 120), organ("liver", 240)];
-    const parent = evaluate(organs, [{ hex: "#A0705A", mass: 0.5 }]);
-    const cousin = evaluate(organs, [{ hex: foodFamilies()[0].members[1], mass: 0.5 }]);
-    expect(parent.organs[2].deflection).toBeGreaterThan(config.symptoms.mild);
-    expect(cousin.organs[2].deflection).toBeGreaterThan(0);
-    expect(cousin.organs[2].deflection).toBeLessThan(parent.organs[2].deflection);
+    for (const item of left.organs) expect(Math.abs(item.deflection)).toBeLessThan(config.symptoms.mild);
+    const felt = senseOf(left.organs, dose, true);
+    expect(felt.shake).toBeLessThan(0.05);
+    expect(felt.pound).toBeLessThan(0.05);
+    expect(felt.blur).toBeLessThan(0.05);
+    expect(felt.move).toBeGreaterThan(0.95);
+    const cousin = evaluate(organs, [{ hex: foodFamilies()[0].members[1], mass: 2.3 }]);
+    for (const item of cousin.organs) expect(Math.abs(item.deflection)).toBeLessThan(config.symptoms.mild);
   });
 
   it("lets a caffeine analog act like caffeine, only weaker and a little off", () => {

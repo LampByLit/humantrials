@@ -53,17 +53,24 @@ export function experimentLine(): string {
   return "You were selected for the human-trial arm of an experiment inside an experiment. They are researching recursion. A mirror pointed at a mirror, if you want it shorter. Your part is the hexchemistry.";
 }
 
+export function arrivalBrief(green: Want, blue: Want): string {
+  return [
+    "I'm Jane. I keep the account, I carry the glass, and I replace the rats.",
+    "You are the human-trial arm of an experiment inside an experiment. They are studying recursion. Your part is the chemistry. Every chemical in this room is a color.",
+    `Green wants one litre of ${green.name}. That is a stocktail: a catalog chemical this lab keeps a sample of, and one the demixer can split. ${moneyText(green.pricePerLitre)} a litre, on your account, once I have looked at it. Find the sample, learn what it is made of, and mix a litre. Set the glass on the green counter. I come about a minute later and take one vessel at a time. I count shelf strength toward the litre. A thin pour counts for less. A near color counts on a sliding scale. More than a litre is fine. I pay for the litre they asked for, and I still take the extra glass.`,
+    `Blue wants one litre of a chemical called ${blue.name}. The color has to match exactly. They do not take near colors, and they do not pay in money. They pay with one litre of any chemical you name. Set their glass on the blue counter. I leave their answer on the red counter.`,
+    "Red has not sent an order. When they do, I will tell you.",
+  ].join(" ");
+}
+
 export function rehabLine(): string {
   return "I hope you're recovering from the accident, and that rehab is going well. It usually does, until someone gets curious.";
 }
 
 export function greenWant(want: Want): string {
   const left = Math.max(0, want.litres - want.filled);
-  if (want.generation === 0 && want.filled <= 0) {
-    return "Green wants one litre of fentanyl. A thousand dollars, on your account, after I have looked at it. The glass goes on the green counter. I come about a minute later, one vessel at a time. Cousins of the color are paid on a sliding scale. They are not sentimental.";
-  }
-  const progress = want.filled > 0.01 ? ` They already have ${litresText(want.filled)}.` : "";
-  return `Green wants ${litresText(left)} of ${want.name}. ${moneyText(want.pricePerLitre)} a litre, analogs on a scale.${progress} ${want.reason}`;
+  const progress = want.filled > 0.01 ? ` They already have ${litresText(want.filled)} of the ${litresText(want.litres)}.` : "";
+  return `Green wants ${litresText(left)} of ${want.name}. ${moneyText(want.pricePerLitre)} a litre, at shelf strength. A thin pour counts for less, and a near color counts on a scale.${progress} ${want.reason}`;
 }
 
 export function blueWant(want: Want): string {
@@ -85,7 +92,9 @@ export type GreenReport = {
   analog: number;
   rejected: number;
   surplus: number;
+  thin: number;
   pay: number;
+  collected: number;
   left: number;
   complete: boolean;
   next: { name: string; price: number; reason: string } | null;
@@ -99,11 +108,15 @@ export function greenReport(report: GreenReport): string {
   if (report.exact > 0) parts.push(`${litresText(report.exact)} of ${report.name}`);
   if (report.analog > 0) parts.push(`${litresText(report.analog)} on the cousin scale`);
   let line = `Green is taking ${parts.join(" and ")}. ${moneyText(report.pay)} on your account.`;
+  if (report.thin > 0.05) line += " The pour was thin. I counted shelf strength, not the volume of the glass.";
+  if (report.analog > 0) line += " A near color is not the article. Closer cousins are worth more.";
   if (report.rejected > 0) line += " The rest was not theirs.";
-  if (report.surplus > 0.02) line += " The extra was not on the slip. I kept it anyway.";
+  if (report.surplus > 0.02) line += " That is more than the slip. I pay for the litre they asked for, and I took the extra glass anyway.";
   if (report.complete && report.next) {
-    line += ` That closes the order. Next they want one litre of ${report.next.name}. ${moneyText(report.next.price)} a litre. ${report.next.reason}`;
-  } else if (!report.complete) line += ` They still want ${litresText(report.left)}.`;
+    line += ` That closes the sale. Next they want one litre of ${report.next.name}. ${moneyText(report.next.price)} a litre. ${report.next.reason}`;
+  } else if (!report.complete) {
+    line += ` So far they have ${litresText(report.collected)}. They still want ${litresText(report.left)}.`;
+  }
   return line;
 }
 
@@ -201,11 +214,11 @@ export function ratDeathLine(name: string): string {
 
 export function ratHelp(rows: { name: string; status: string }[]): string {
   const roll = rows.length === 0 ? "The cages are empty, which is not the arrangement." : `${rows.map((row) => `${row.name} is ${row.status}`).join(". ")}.`;
-  return `${roll} Hood, Albino, Ink, and Brindle live in the cages by the color counters. You cannot move the cages. Pour food on them and they eat: wormmeal, kelpmash, beetmash, and the named cousins. Pour anything else and it is a dose. They run hotter than you, and they get hungry sooner. When one dies, I replace it.`;
+  return `${roll} Hood, Albino, Ink, and Brindle live in the cages by the color counters. You cannot move the cages. Pour food on them and they eat: wormmeal, kales, crudite, and the named cousins. Pour anything else and it is a dose. They run hotter than you, and they get hungry sooner. When one dies, I replace it.`;
 }
 
 export function submitHelp(): string {
-  return "Green glass goes on the green counter. Blue glass goes on the blue counter. About a minute later I come through the south door and take one vessel at a time. Green pays for fentanyl and, later, for whatever named color they have asked for. Analogs count there, at a discount. Blue takes only the exact hex, and pays with a litre of your choosing, which I leave on red. Red is not buying yet.";
+  return "Green glass goes on the green counter. Blue glass goes on the blue counter. About a minute later I come through the south door and take one vessel at a time. Green is buying a stocktail, one litre of a catalog chemical the demixer can split. I count shelf strength. A thin pour and a near color both count for less, and anything past the litre is extra. I still take the glass. When the litre is in, they name the next stocktail. Blue takes only the exact hex, and pays with a litre of your choosing, which I leave on red. Red is not buying yet.";
 }
 
 export function analogHelp(): string {
@@ -235,7 +248,7 @@ export function pilotLine(): string {
 }
 
 export function analyzerLine(): string {
-  return "The cabinet on the east side is an analyzer. Pour into the well. It prints the name it has, and the latin, and then the well is empty. I would not pour the last of something you meant to sell.";
+  return "The cabinet on the east side is an analyzer. Pour into the well. It prints the name, the latin, and the measure of the liquid: hue, potency, purity, how much is in the litre, how cloudy it is. Then the well is empty. I would not pour the last of something you meant to sell.";
 }
 
 export function lineDown(): string {

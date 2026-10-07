@@ -7,6 +7,7 @@ import catalog from "../../concept/chems.json";
 import { cents } from "./format";
 import { blueReason, blueReport, greenReason, greenReport, type BlueReport, type GreenReport } from "./lines";
 import { priceOf, priceOfFill, type Fill } from "./prices";
+import { pickStocktail } from "./stocktails";
 
 // A stock litre is the mass in one litre at shelf strength. Dilution keeps the hex
 // and lowers the mass, so a thin litre credits less than a shelf litre.
@@ -41,19 +42,21 @@ export function stockLitres(mass: number): number {
 }
 
 export function createLedger(seed: number): Ledger {
+  const rng = createRng(seed);
+  const first = pickStocktail(rng, "");
   return {
     credits: 500,
-    rng: createRng(seed),
+    rng,
     awaitingReward: false,
     green: {
       faction: "green",
-      hex: "#6600FF",
-      name: "Fentanyl",
+      hex: first.hex,
+      name: first.name,
       litres: 1,
       filled: 0,
-      pricePerLitre: 1000,
+      pricePerLitre: priceOf(first.hex),
       allowAnalogs: true,
-      reason: "They did not say for whom.",
+      reason: greenReason(first.name, rng),
       generation: 0,
     },
     blue: {
@@ -100,7 +103,7 @@ function pickBlue(rng: () => number, avoid: string): { hex: string; name: string
 }
 
 function rollGreen(ledger: Ledger, avoid: string): Contract {
-  const picked = pickNamed(ledger.rng, avoid);
+  const picked = pickStocktail(ledger.rng, avoid);
   return {
     faction: "green",
     hex: picked.hex,
@@ -138,16 +141,19 @@ export function submitSamples(ledger: Ledger, faction: "green" | "blue", samples
   let rejected = 0;
   let cousins = 0;
   let surplus = 0;
+  let thin = 0;
   let pay = 0;
   for (const sample of samples) {
     const matched = matchOf(sample.hex, contract);
     const raw = stockLitres(sample.mass);
     const worth = raw * matched.scale;
+    const poured = sample.volume > 0 ? sample.volume * 1000 : raw;
     if (matched.cousin && matched.scale <= 0) cousins += 1;
     if (worth < DUST) {
       rejected += 1;
       continue;
     }
+    if (poured > raw + 0.02) thin += poured - raw;
     const room = contract.litres - contract.filled;
     if (room <= DUST) {
       surplus += worth;
@@ -171,7 +177,9 @@ export function submitSamples(ledger: Ledger, faction: "green" | "blue", samples
       analog,
       rejected,
       surplus,
+      thin,
       pay,
+      collected: contract.filled,
       left,
       complete,
       next: null,

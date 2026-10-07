@@ -107,6 +107,8 @@ function drug(heart: number, brain: number, liver: number, extra: Partial<Profil
 // Substances with no real lethal dose. At this ceiling an organ tops out in the moderate band,
 // with room for a random side effect on top before anything turns critical.
 const HARMLESS = 0.25;
+// A meal may leave a trace. It stays far under the mild symptom line.
+const MEAL = 0.012;
 
 const profiles: Record<string, Profile> = {
   "#FFFFFF": drug(0, 0, 0),
@@ -204,10 +206,10 @@ const profiles: Record<string, Profile> = {
   "#FF3300": drug(1.6, 0.8, 0, { shake: 2.5, spasm: 0.8, wash: 2, tint: BURN, flush: 4, skin: BURN, numb: 0.6 }),
   "#AAFF00": drug(2.2, 5.8, -0.5, { shake: 2, spasm: 8, pound: 1.5, wash: 1, tint: [0.8, 1, 0.2], flush: 1, skin: FLUSH }),
   "#CCFF00": drug(2.8, 1.8, 0, { shake: 1.4, pound: 2.4, wash: 0.7, tint: WARM, flush: 1.4, skin: FLUSH }),
-  // Food feeds the body and still drives organs. The ceiling holds a full beaker at moderate.
-  "#A0705A": drug(0.35, 0.15, 0.7, { pound: 0.2, ceiling: HARMLESS }),
-  "#2E5E3A": drug(0.1, 0.55, 0.45, { ceiling: HARMLESS }),
-  "#7A1E2A": drug(0.85, 0.4, 0.1, { pound: 0.45, shake: 0.2, ceiling: HARMLESS }),
+  // Food feeds the body. The organ nudge is a trace, and a named analog is weaker still.
+  "#A0705A": drug(0.02, 0.008, 0.04, { ceiling: MEAL }),
+  "#2E5E3A": drug(0.006, 0.04, 0.02, { ceiling: MEAL }),
+  "#7A1E2A": drug(0.04, 0.015, 0.006, { ceiling: MEAL }),
 };
 
 function bend(profile: Profile, analog: Analog): Profile {

@@ -1,4 +1,4 @@
-import { input } from "../input";
+import { input, resumeLook } from "../input";
 import { litresText, moneyText } from "./format";
 import type { Ledger } from "./ledger";
 
@@ -19,14 +19,17 @@ export function createPanel(onTalk: (text: string) => void): JanePanel {
   const field = document.getElementById("jane-input") as HTMLInputElement;
   const credits = document.getElementById("jane-credits")!;
   const wants = document.getElementById("jane-wants")!;
-  const canvas = document.querySelector("canvas");
 
-  const close = () => {
+  const close = (lock = true) => {
     root.classList.add("collapsed");
-    input.console = false;
     field.blur();
-    canvas?.requestPointerLock();
+    if (lock) resumeLook();
+    else input.console = false;
   };
+
+  window.addEventListener("resume-play", () => {
+    if (!root.classList.contains("collapsed")) close(false);
+  });
 
   const open = () => {
     root.classList.remove("collapsed");
@@ -91,10 +94,10 @@ export function createPanel(onTalk: (text: string) => void): JanePanel {
       const credit = moneyText(ledger.credits);
       const greenLeft = Math.max(0, ledger.green.litres - ledger.green.filled);
       const blueLeft = Math.max(0, ledger.blue.litres - ledger.blue.filled);
-      const green = `Green  ${litresText(greenLeft)} ${ledger.green.name}  ${moneyText(ledger.green.pricePerLitre)}`;
+      const green = `Green wants ${litresText(greenLeft)} of ${ledger.green.name}, ${moneyText(ledger.green.pricePerLitre)} a litre.`;
       const blue = ledger.awaitingReward
-        ? "Blue  name the litre you want"
-        : `Blue  ${litresText(blueLeft)} ${ledger.blue.name}`;
+        ? "Blue is waiting for you to name the litre you want."
+        : `Blue wants ${litresText(blueLeft)} of ${ledger.blue.name}. The color must be exact.`;
       const next = `${credit}|${green}|${blue}`;
       if (next === shown) return;
       shown = next;

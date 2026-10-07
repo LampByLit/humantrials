@@ -6,7 +6,7 @@ import { input } from "../input";
 import { addBox, DOOR_WIDTH, DOOR_X, ROOM_Z, type Beaker } from "../lab";
 import { createRats } from "../rats";
 import { replyTo, stateCard } from "./ask";
-import { lineDown, orderArrival, ratReplaceLine, rewardArrival, stillOnLine } from "./lines";
+import { arrivalBrief, helloLine, lineDown, orderArrival, ratReplaceLine, rewardArrival, stillOnLine } from "./lines";
 import { createLedger, submitSamples } from "./ledger";
 import { createMemory, note, remember } from "./memory";
 import { createPanel, type JanePanel } from "./panel";
@@ -78,6 +78,7 @@ export function createSession(game: {
   panel = createPanel((text) => {
     panel.add("You", text);
     remember(memory, "user", text);
+    speaker.say(text, "player");
     const reply = replyTo(text, { ledger, rats: rats.summary(), introduced: memory.introduced });
     if (reply.effect?.type === "order") {
       jobs.enqueue({
@@ -107,7 +108,18 @@ export function createSession(game: {
       say(result.line);
     },
     revive: (index) => rats.revive(index),
+    conceal: (index) => rats.conceal(index),
+    tote: (index) => rats.tote(index),
+    release: () => rats.release(),
     spot: (index) => rats.spot(index),
+    greet() {
+      if (memory.introduced) {
+        say(helloLine());
+        return;
+      }
+      memory.introduced = true;
+      say(arrivalBrief(ledger.green, ledger.blue));
+    },
   });
   jobs.enqueue = (job) => walker.enqueue(job);
 
@@ -198,7 +210,10 @@ export function createSession(game: {
         jobs.enqueue({ kind: "replace", index: death.index, line: ratReplaceLine(death.name, death.cause) });
         note(memory, `${death.name} died${death.cause ? `: ${death.cause}` : ""}.`);
       }
-      walker.update(dt, held);
+      walker.update(dt, held, {
+        speaking: () => panel.isOpen() || speaker.speaking(),
+        face: panel.isOpen() ? { x: eye.x, z: eye.z } : null,
+      });
       panel.setLedger(ledger);
       pushButton(dt, eye.hands);
       janeNear = walker.here() && flatDistance(eye.x, eye.z, walker.place().x, walker.place().z) < 1.8;

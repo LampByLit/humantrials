@@ -13,13 +13,32 @@ const BENCH_X = 10.3;
 const BENCH_W = 5.4;
 const BENCH_D = 1.35;
 const OFFSETS = [-1.95, -0.65, 0.65, 1.95];
-const CAGE_H = 0.75;
-// The bind pose's box is mostly tail and empty skeleton, so the visible body is a fraction of it.
-const LENGTHS = [1.35, 1.15, 1.25, 1.0];
+// Wooden cage height, after the Sketchfab backdrop is dropped. The bars are about
+// 0.22m wide and 0.30m deep at this height, which is what the rats have to fit in.
+const CAGE_H = 0.48;
+// Nose-to-tail target. The bind box is mostly tail and empty skeleton, so the
+// visible body is shorter than this and still clears the bars.
+const LENGTHS = [0.62, 0.5, 0.56, 0.46];
 const COATS = [0xffffff, 0xf4e6e1, 0x2a2a2a, 0xc4884e];
 const PALE = [false, true, false, false];
 
-type Plate = { ctx: CanvasRenderingContext2D; map: THREE.CanvasTexture; key: string };
+type Plate = {
+  ctx: CanvasRenderingContext2D;
+  map: THREE.CanvasTexture;
+  key: string;
+  led: THREE.MeshStandardMaterial;
+};
+
+const SCREEN_W = 512;
+const SCREEN_H = 320;
+const PHOSPHOR = "#39ff7a";
+const DIM = "#1f8f48";
+const AMBER = "#ffcc33";
+const ALARM = "#ff5a4a";
+
+const shell = new THREE.MeshStandardMaterial({ color: 0x1a1e22, roughness: 0.38, metalness: 0.72 });
+const bezelMat = new THREE.MeshStandardMaterial({ color: 0x0b0d0f, roughness: 0.5, metalness: 0.45 });
+const footMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.92, metalness: 0 });
 
 type Caged = {
   profile: RatProfile;
@@ -41,33 +60,158 @@ export type RatPen = {
   summary(): { name: string; status: string }[];
   claimDeaths(): { index: number; name: string; cause: string | null }[];
   revive(index: number): void;
+  conceal(index: number): void;
+  tote(index: number): THREE.Object3D;
+  release(): void;
   spot(index: number): { x: number; z: number };
 };
 
-function plateFor(name: string): Plate {
+function plateFor(): Plate {
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 64;
+  canvas.width = SCREEN_W;
+  canvas.height = SCREEN_H;
   const ctx = canvas.getContext("2d")!;
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;
-  return { ctx, map, key: "" };
+  map.anisotropy = 8;
+  const led = new THREE.MeshStandardMaterial({
+    color: 0x0c2e1c,
+    emissive: 0x39ff7a,
+    emissiveIntensity: 2.4,
+    roughness: 0.35,
+  });
+  return { ctx, map, key: "", led };
 }
 
-function paint(plate: Plate, name: string, status: string) {
-  const key = `${name}:${status}`;
+function statusInk(status: string) {
+  if (status === "dead") return "#7a332c";
+  if (status === "ill" || status === "starving") return ALARM;
+  if (status === "hungry") return AMBER;
+  return PHOSPHOR;
+}
+
+function ledHex(status: string) {
+  if (status === "dead") return 0x3a1814;
+  if (status === "ill" || status === "starving") return 0xff5a4a;
+  if (status === "hungry") return 0xffcc33;
+  return 0x39ff7a;
+}
+
+function paint(plate: Plate, name: string, status: string, vitals: RatVitals) {
+  const needs = vitals.needs;
+  const cause = vitals.body.cause ?? "";
+  const key = `${name}|${status}|${needs.energy.toFixed(2)}|${needs.protein.toFixed(2)}|${needs.vitamins.toFixed(2)}|${cause}`;
   if (plate.key === key) return;
   plate.key = key;
+  plate.led.emissive.setHex(ledHex(status));
+  plate.led.color.setHex(status === "dead" ? 0x1a0c0a : 0x0c2e1c);
   const { ctx, map } = plate;
-  ctx.clearRect(0, 0, 256, 64);
-  ctx.fillStyle = status === "dead" ? "#5c4038" : status === "ill" || status === "starving" ? "#8a3a32" : "#2c3338";
-  ctx.fillRect(0, 0, 256, 64);
-  ctx.fillStyle = "#f4f1ea";
-  ctx.font = "600 28px system-ui, sans-serif";
-  ctx.textAlign = "center";
+  const ink = statusInk(status);
+  ctx.fillStyle = status === "dead" ? "#120806" : "#031208";
+  ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   ctx.textBaseline = "middle";
-  ctx.fillText(`${name}  ${status}`, 128, 34);
+  ctx.shadowColor = ink;
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = DIM;
+  ctx.font = "20px Consolas, monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("SUBJECT", 28, 36);
+  ctx.textAlign = "right";
+  ctx.fillText(status === "dead" ? "OFFLINE" : "LIVE", SCREEN_W - 28, 36);
+  ctx.fillStyle = ink;
+  ctx.font = "64px Consolas, monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(name.toUpperCase(), 28, 96, SCREEN_W - 56);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#0c3d22";
+  ctx.fillRect(28, 132, SCREEN_W - 56, 2);
+  ctx.font = "28px Consolas, monospace";
+  ctx.fillStyle = DIM;
+  ctx.fillText("STATE", 28, 172);
+  ctx.fillStyle = ink;
+  ctx.textAlign = "right";
+  ctx.shadowBlur = 10;
+  ctx.fillText(status.toUpperCase(), SCREEN_W - 28, 172);
+  ctx.shadowBlur = 0;
+  if (cause) {
+    ctx.fillStyle = DIM;
+    ctx.font = "20px Consolas, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(cause, 28, 208, SCREEN_W - 56);
+  }
+  meter(ctx, "NRG", needs.energy, 0.42, 244, status);
+  meter(ctx, "PRO", needs.protein, 0.3, 274, status);
+  meter(ctx, "VIT", needs.vitamins, 0.3, 304, status);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+  for (let y = 0; y < SCREEN_H; y += 3) ctx.fillRect(0, y, SCREEN_W, 1);
   map.needsUpdate = true;
+}
+
+function meter(ctx: CanvasRenderingContext2D, label: string, value: number, warn: number, y: number, status: string) {
+  const level = Math.max(0, Math.min(1, value));
+  const color = status === "dead" ? "#5c2824" : level < warn * 0.45 ? ALARM : level < warn ? AMBER : PHOSPHOR;
+  ctx.font = "20px Consolas, monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = DIM;
+  ctx.fillText(label, 28, y);
+  const x = 108;
+  const width = 300;
+  const height = 12;
+  ctx.fillStyle = "#07160d";
+  ctx.fillRect(x, y - height / 2, width, height);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y - height / 2, width * level, height);
+  ctx.textAlign = "right";
+  ctx.fillText(level.toFixed(2), SCREEN_W - 28, y);
+}
+
+// A low lectern on the bench in front of the cage, screen tipped back so it faces
+// someone standing on the north side.
+function mountTerminal(parent: THREE.Object3D, plate: Plate) {
+  const root = new THREE.Group();
+  root.position.set(0, 0, -0.42);
+
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.016, 0.16), shell);
+  deck.position.y = 0.008;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  root.add(deck);
+
+  const foot = new THREE.BoxGeometry(0.02, 0.004, 0.014);
+  for (const x of [-0.1, 0.1]) {
+    for (const z of [-0.06, 0.06]) {
+      const pad = new THREE.Mesh(foot, footMat);
+      pad.position.set(x, 0.002, z);
+      root.add(pad);
+    }
+  }
+
+  const panel = new THREE.Group();
+  panel.position.set(0, 0.016, -0.05);
+  panel.rotation.order = "YXZ";
+  panel.rotation.y = Math.PI;
+  panel.rotation.x = -0.48;
+  root.add(panel);
+
+  const faceH = 0.132;
+  const bezel = new THREE.Mesh(new THREE.BoxGeometry(0.208, faceH, 0.016), bezelMat);
+  bezel.position.y = faceH / 2;
+  bezel.castShadow = true;
+  panel.add(bezel);
+
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.182, 0.114),
+    new THREE.MeshBasicMaterial({ map: plate.map }),
+  );
+  screen.position.set(0, faceH / 2, 0.009);
+  panel.add(screen);
+
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.005, 14), plate.led);
+  lamp.position.set(-0.096, 0.02, -0.062);
+  root.add(lamp);
+
+  parent.add(root);
 }
 
 function tint(root: THREE.Object3D, coat: number, pale: boolean) {
@@ -95,6 +239,17 @@ function tint(root: THREE.Object3D, coat: number, pale: boolean) {
 
 function placeCage(scene: THREE.Scene, source: THREE.Object3D, x: number, z: number) {
   const cage = source.clone(true);
+  // The download includes a room-sized backdrop. Measuring that makes the wooden
+  // cage a few centimetres tall, and the rats cannot get inside it.
+  const backdrop: THREE.Object3D[] = [];
+  cage.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const size = mesh.geometry.boundingBox!.getSize(new THREE.Vector3());
+    if (Math.max(size.x, size.y, size.z) > 80) backdrop.push(mesh);
+  });
+  for (const mesh of backdrop) mesh.removeFromParent();
   plantHeight(cage, CAGE_H);
   cage.updateMatrixWorld(true);
   const fitted = new THREE.Box3().setFromObject(cage);
@@ -141,14 +296,8 @@ export function createRats(scene: THREE.Scene, world: RAPIER_WORLD, rat: GLTF, c
     const mixer = new THREE.AnimationMixer(model);
     const idle = idleClip ? mixer.clipAction(idleClip) : null;
     idle?.play();
-    const plate = plateFor(profile.name);
-    const card = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.22, 0.055),
-      new THREE.MeshBasicMaterial({ map: plate.map, transparent: true, depthWrite: false }),
-    );
-    card.position.set(0, CAGE_H + 0.08, 0);
-    card.rotation.y = Math.PI;
-    anchor.add(card);
+    const plate = plateFor();
+    mountTerminal(anchor, plate);
     return {
       profile,
       vitals: createRat(seed + index * 17),
@@ -158,20 +307,28 @@ export function createRats(scene: THREE.Scene, world: RAPIER_WORLD, rat: GLTF, c
       mixer,
       idle,
       plate,
-      mouth: { id: `rat-${index}`, x, y: BENCH_SURFACE + 0.16, z, half: 0.14, radius: 0.28 },
+      mouth: { id: `rat-${index}`, x, y: BENCH_SURFACE + 0.08, z, half: 0.06, radius: 0.16 },
     };
   });
 
   function paintAll() {
-    for (const rat of rats) paint(rat.plate, rat.profile.name, ratCondition(rat.vitals));
+    for (const rat of rats) paint(rat.plate, rat.profile.name, ratCondition(rat.vitals), rat.vitals);
   }
   paintAll();
+
+  let carried: { model: THREE.Object3D; mixer: THREE.AnimationMixer } | null = null;
+
+  function dropTote() {
+    if (!carried) return;
+    carried.model.removeFromParent();
+    carried = null;
+  }
 
   return {
     wade(sim, dt) {
       for (const rat of rats) {
         if (!rat.vitals.body.alive) continue;
-        const gulp = sipPuddle(sim, rat.mouth.x, BENCH_SURFACE, rat.mouth.z, 0.34, 0.00002, dt);
+        const gulp = sipPuddle(sim, rat.mouth.x, BENCH_SURFACE, rat.mouth.z, 0.2, 0.00002, dt);
         if (gulp) feedRat(rat.vitals, rat.profile, toChem(gulp));
       }
     },
@@ -181,8 +338,9 @@ export function createRats(scene: THREE.Scene, world: RAPIER_WORLD, rat: GLTF, c
         const alive = rat.vitals.body.alive;
         rat.model.rotation.z = alive ? 0 : 1.15;
         if (alive) rat.mixer.update(dt);
-        paint(rat.plate, rat.profile.name, ratCondition(rat.vitals));
+        paint(rat.plate, rat.profile.name, ratCondition(rat.vitals), rat.vitals);
       }
+      carried?.mixer.update(dt);
     },
     feed(id, solution) {
       const index = Number(id.slice(4));
@@ -212,9 +370,30 @@ export function createRats(scene: THREE.Scene, world: RAPIER_WORLD, rat: GLTF, c
       rat.generation += 1;
       rat.vitals = createRat(seed + index * 17 + rat.generation * 100);
       rat.claimed = false;
+      rat.model.visible = true;
       rat.model.rotation.z = 0;
       rat.idle?.reset().play();
-      paint(rat.plate, rat.profile.name, "fed");
+      paint(rat.plate, rat.profile.name, ratCondition(rat.vitals), rat.vitals);
+    },
+    conceal(index) {
+      const rat = rats[index];
+      if (rat) rat.model.visible = false;
+    },
+    tote(index) {
+      dropTote();
+      const model = cloneSkinned(rat.scene);
+      plantLength(model, LENGTHS[index] ?? LENGTHS[0]);
+      tint(model, COATS[index] ?? COATS[0], PALE[index] ?? false);
+      model.rotation.order = "YXZ";
+      const mixer = new THREE.AnimationMixer(model);
+      const idle = idleClip ? mixer.clipAction(idleClip) : null;
+      idle?.play();
+      scene.add(model);
+      carried = { model, mixer };
+      return model;
+    },
+    release() {
+      dropTote();
     },
     spot(index) {
       return { x: BENCH_X + OFFSETS[index], z };

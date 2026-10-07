@@ -14,17 +14,24 @@ function chunks(text: string): string[] {
   return out;
 }
 
-function fallback(text: string): Promise<void> {
+export type Voice = "jane" | "player";
+
+function fallback(text: string, voice: Voice): Promise<void> {
   if (!("speechSynthesis" in window)) return Promise.resolve();
   return new Promise((resolve) => {
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.96;
-    utter.pitch = 0.9;
     const voices = speechSynthesis.getVoices();
-    utter.voice =
-      voices.find((voice) => /en/i.test(voice.lang) && /female|zira|samantha|jenny|libby/i.test(voice.name)) ??
-      voices.find((voice) => /^en/i.test(voice.lang)) ??
-      null;
+    const english = (name: RegExp) => voices.find((item) => /^en/i.test(item.lang) && name.test(item.name));
+    if (voice === "player") {
+      const male = english(/david|mark|guy|ryan|george|daniel|james|male/i);
+      utter.voice = male ?? voices.find((item) => /^en/i.test(item.lang)) ?? null;
+      utter.pitch = male ? 0.92 : 0.72;
+    } else {
+      utter.voice =
+        english(/female|zira|samantha|jenny|libby|aria/i) ?? voices.find((item) => /^en/i.test(item.lang)) ?? null;
+      utter.pitch = 0.9;
+    }
     utter.onend = () => resolve();
     utter.onerror = () => resolve();
     speechSynthesis.speak(utter);
@@ -41,34 +48,37 @@ function play(url: string): Promise<void> {
 }
 
 export function createSpeaker() {
-  const queue: string[] = [];
+  const queue: { text: string; voice: Voice }[] = [];
   let busy = false;
 
   async function pump() {
     if (busy || queue.length === 0) return;
     busy = true;
-    const text = queue.shift()!;
+    const item = queue.shift()!;
     try {
       const response = await fetch("/api/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(item),
       });
       if (!response.ok) throw new Error(String(response.status));
       const url = URL.createObjectURL(await response.blob());
       await play(url);
       URL.revokeObjectURL(url);
     } catch {
-      await fallback(text);
+      await fallback(item.text, item.voice);
     }
     busy = false;
     void pump();
   }
 
   return {
-    say(text: string) {
-      for (const part of chunks(text)) queue.push(part);
+    say(text: string, voice: Voice = "jane") {
+      for (const part of chunks(text)) queue.push({ text: part, voice });
       void pump();
+    },
+    speaking() {
+      return busy || queue.length > 0;
     },
   };
 }

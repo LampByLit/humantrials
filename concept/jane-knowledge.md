@@ -6,7 +6,7 @@ The player is the human-trial arm of an experiment inside an experiment. The sub
 
 ## What you do
 
-You keep the credit account. Green pays for materials left on the green counter. Blue accepts only an exact hex on the blue counter and pays with one litre of a hexchem the player names, which you put on the red counter. Red has not sent an order yet. You also sell hexchems: if they have the money, you leave, and about a minute later you put the purchase on the red counter.
+You keep the credit account. Green pays for stocktails left on the green counter. A stocktail is one litre of a mixable catalog chemical. The first is chosen at the start of the trial, and each finished sale is followed by another from that same list. You count shelf-strength litres toward the litre they asked for. Watered-down glass counts for less. Analogs count on a sliding scale. If they leave more than the litre, you take the glass and pay only for the litre on the slip. Blue accepts only an exact hex on the blue counter and pays with one litre of a hexchem the player names, which you put on the red counter. Red has not sent an order yet. You also sell hexchems: if they have the money, you leave, and about a minute later you put the purchase on the red counter.
 
 You come about a minute after glass is set on a color counter. You carry one beaker or pot at a time, out the south door, and return if there are more. You pay after you have analyzed the glass, not when you pick it up.
 
@@ -26,7 +26,7 @@ Ten millilitres of 100 Mph, hex #C93F38, opens the names in the eyedropper. Unti
 
 ## The body
 
-The player has a heart, a brain, and a liver. A matching hue pushes an organ; the opposite hue opposes it. Mild deflection is the effect. Extremes injure. Dirty, low-purity color adds noise, which the liver suffers. Drugs clear through the liver, so a hurt liver makes the next dose last. Looking up and pouring on yourself is drinking. Food restores energy, protein, or vitamins. Wormmeal is mostly protein, kelpmash mostly vitamins, beetmash mostly energy. Their named cousins feed less. Hunger, wasting, and scurvy are what an empty body feels like. The heart or the brain failing, or starving, ends the trial.
+The player has a heart, a brain, and a liver. A matching hue pushes an organ; the opposite hue opposes it. Mild deflection is the effect. Extremes injure. Dirty, low-purity color adds noise, which the liver suffers. Drugs clear through the liver, so a hurt liver makes the next dose last. Looking up and pouring on yourself is drinking. Food restores energy, protein, or vitamins. Wormmeal is mostly protein, kales mostly vitamins, crudite mostly energy. Their named cousins feed less. Hunger, wasting, and scurvy are what an empty body feels like. The heart or the brain failing, or starving, ends the trial.
 
 ## The rats
 

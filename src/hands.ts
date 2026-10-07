@@ -22,6 +22,10 @@ const GRIP_RADIUS = BEAKER_RADIUS * 1.15;
 const MAX_JOINT_CURL = 1.6;
 // Fingertip spheres. Small enough that a pad has to actually meet the glass.
 export const PAD_RADIUS = 0.008;
+// Palm pad half extents. shiftOutOfGlass uses the same box so the pad stays outside the glass.
+const PALM_HALF_X = 0.018;
+const PALM_HALF_Y = 0.028;
+const PALM_HALF_Z = 0.007;
 // How hooked and how fanned the open hand is: together these make it a claw that can be
 // placed around a beaker. Both fade out as the hand closes.
 const CLAW_ANGLE = 0.18;
@@ -287,7 +291,7 @@ function createArm(model: THREE.Object3D, world: RAPIER.World, side: -1 | 1, fil
     return collider;
   };
   // A thin pad on the palm. The old box was a mitten: 7cm by 10cm by 4cm.
-  solid(RAPIER.ColliderDesc.cuboid(0.018, 0.028, 0.007).setTranslation(0, 0.045, 0));
+  solid(RAPIER.ColliderDesc.cuboid(PALM_HALF_X, PALM_HALF_Y, PALM_HALF_Z).setTranslation(0, 0.045, 0));
   const pads = ["Thumb", "Index", "Middle", "Ring", "Little"].map((name) => ({
     id: name.toLowerCase(),
     bone: findBone(model, `${name}_1${tag}`),
@@ -468,7 +472,7 @@ function findSideGrip(hands: Hands, beakers: Beaker[]) {
   const parent = hands.model.parent;
   if (parent) parent.getWorldQuaternion(handQuat);
   let found = false;
-  let best = 0.3;
+    let best = hands.carrying ? 0.6 : 0.3;
   for (const beaker of beakers) {
     if (beaker.radius <= BEAKER_RADIUS) continue;
     const at = beaker.body.translation();
@@ -494,7 +498,9 @@ function findSideGrip(hands: Hands, beakers: Beaker[]) {
     if (across.lengthSq() < 1e-6) continue;
     across.normalize();
     const surface = tipA.distanceTo(shoulderAt) - beaker.radius;
-    if (surface > 0.22 || surface >= best) continue;
+    // Once the pot is carried the right hand stays on it, so the aim must not drop mid-lift.
+    const reach = hands.carrying ? 0.6 : 0.22;
+    if (surface > reach || surface >= best) continue;
     best = surface;
     found = true;
     gripPoint.copy(shoulderAt).addScaledVector(across, beaker.radius + 0.02);
@@ -553,17 +559,23 @@ function placeLeft(hands: Hands, grip: THREE.Vector3 | null, amount: number) {
 
 const savedShoulder = new THREE.Vector3();
 const leftTarget = new THREE.Vector3();
+const seated = new THREE.Vector3();
+const seatOrigin = new THREE.Vector3();
 const palmShift = new THREE.Vector3();
 const vesselAxis = new THREE.Vector3();
 const vesselRel = new THREE.Vector3();
 const vesselQuat = new THREE.Quaternion();
 
 // Pulls the dynamic left hand toward the same pose placeLeft would use.
-// Clear air is that pose exactly. A large beaker stops the hand and the
-// squeeze scales with how heavy the glass is.
+// Clear air is that pose exactly. A large pot is approached at a force-limited
+// speed and the hand stops on the outside of the glass, which is the squeeze.
 export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   const arm = hands.left;
   if (!arm.driven) return;
+  if (hands.carrying) {
+    holdCarriedHand(hands, beakers);
+    return;
+  }
   const shoulder = hands.leftShoulder;
   const amount = hands.left.raised || hands.pair > 0.02 ? hands.pair : 0;
   const aim = hands.aiming ? hands.aimPoint : null;
@@ -571,8 +583,8 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   placeLeft(hands, aim, amount);
   hands.model.updateMatrixWorld(true);
   arm.hand.getWorldPosition(leftTarget);
-  clearOfVessel(beakers, leftTarget);
   arm.hand.getWorldQuaternion(handQuaternion);
+  seatHandPoint(arm, beakers, leftTarget, leftTarget);
   if (!arm.solid) {
     parkLeft(arm, leftTarget);
     return;
@@ -582,28 +594,47 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   arm.hand.getWorldPosition(handPosition);
   palmShift.set(0, 0.045, 0).applyQuaternion(handQuaternion);
   const hitMass = sampleMass(arm, beakers, leftTarget, handPosition, palmShift);
-  if (hitMass <= 0 && !leftBlocked) {
+  // A pot in reach is closed on by the squeeze, not by parking the hand inside it.
+  if (!hands.aiming && hitMass <= 0 && !leftBlocked) {
     placeLeft(hands, aim, amount);
     hands.model.updateMatrixWorld(true);
     parkLeft(arm, leftTarget);
     return;
   }
-  const free = hitMass > 0 ? freeApproach(arm, beakers, handPosition, leftTarget, palmShift) : handPosition;
+  seated.copy(hitMass > 0 ? freeApproach(arm, beakers, handPosition, leftTarget, palmShift) : handPosition);
+  seatHandPoint(arm, beakers, seated, handPosition);
   arm.body.setTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z }, true);
   arm.body.setRotation({ x: handQuaternion.x, y: handQuaternion.y, z: handQuaternion.z, w: handQuaternion.w }, true);
   syncPads(arm);
-  arm.body.setTranslation({ x: free.x, y: free.y, z: free.z }, true);
-  across.subVectors(leftTarget, free);
+  arm.body.setTranslation({ x: seated.x, y: seated.y, z: seated.z }, true);
+  across.subVectors(leftTarget, seated);
   const dist = across.length();
   const mass = Math.max(0.2, arm.body.mass());
-  // Once the joint has the beaker, the hand just rests on the glass.
-  const gripForce = hands.carrying ? 0 : leftGripForce(hands.gripMass);
+  const gripForce = leftGripForce(hands.gripMass);
   const step = dist < 1e-4 || dt < 1e-4 ? 0 : Math.min(dist / dt, (gripForce * dt) / mass);
   if (dist > 1e-4) across.multiplyScalar(step / dist);
   else across.set(0, 0, 0);
   arm.body.setLinvel({ x: across.x, y: across.y, z: across.z }, true);
   arm.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   arm.body.wakeUp();
+}
+
+// While the weld carries the pot, the left hand stays on the outside and moves with it.
+// Collision with the glass is off then, so nothing else keeps the hand out.
+export function holdCarriedHand(hands: Hands, beakers: Beaker[]) {
+  const arm = hands.left;
+  if (!hands.carrying || !arm.driven || !arm.solid) return;
+  const shoulder = hands.leftShoulder;
+  const amount = hands.left.raised || hands.pair > 0.02 ? hands.pair : 0;
+  savedShoulder.copy(shoulder.position);
+  placeLeft(hands, hands.aiming ? hands.aimPoint : null, amount);
+  hands.model.updateMatrixWorld(true);
+  arm.hand.getWorldPosition(leftTarget);
+  arm.hand.getWorldQuaternion(handQuaternion);
+  seatHandPoint(arm, beakers, leftTarget, leftTarget);
+  shoulder.position.copy(savedShoulder);
+  hands.model.updateMatrixWorld(true);
+  parkLeft(arm, leftTarget);
 }
 
 // Enough that friction at both palms holds the vessel's weight with margin to spare.
@@ -650,27 +681,29 @@ function sampleMass(arm: Arm, beakers: Beaker[], at: THREE.Vector3, origin: THRE
   return mass;
 }
 
-// The pose target can sit in the cavity of a wide pot. The glass still pushes it back
-// outside, so the hand is not driven through the wall.
-function clearOfVessel(beakers: Beaker[], point: THREE.Vector3) {
-  for (const beaker of beakers) {
-    if (beaker.radius <= BEAKER_RADIUS) continue;
-    const at = beaker.body.translation();
-    const rotation = beaker.body.rotation();
-    vesselQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    vesselAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
-    vesselRel.set(point.x - at.x, point.y - at.y, point.z - at.z);
-    const axial = vesselRel.dot(vesselAxis);
-    vesselRel.addScaledVector(vesselAxis, -axial);
-    if (Math.abs(axial) > beaker.height / 2) continue;
-    const radial = vesselRel.length();
-    // The mouth is open. Only the glass, not the space inside it, pushes the hand out.
-    if (radial < beaker.radius - 0.01) continue;
-    const limit = beaker.radius + 0.02;
-    if (radial >= limit) continue;
-    if (radial < 1e-4) vesselRel.set(1, 0, 0);
-    else vesselRel.multiplyScalar(limit / radial);
-    point.set(at.x, at.y, at.z).addScaledVector(vesselAxis, axial).add(vesselRel);
+const intoLocal = new THREE.Vector3();
+// How far through the wall a sample can be and still be the glass, rather than the open mouth.
+const GLASS_IN = 0.055;
+
+// Moves `at` so the palm and fingertips sit outside a large pot. `origin` is where the
+// hand bone is now; pad offsets are taken from there. The mouth stays open.
+function seatHandPoint(arm: Arm, beakers: Beaker[], at: THREE.Vector3, origin: THREE.Vector3) {
+  seatOrigin.copy(origin);
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    const apply = (sample: THREE.Vector3, ball: boolean) => {
+      const dist = shiftOutOfGlass(beakers, sample, seatOrigin, handQuaternion, ball, vesselRel);
+      if (dist <= 1e-4) return;
+      at.addScaledVector(vesselRel, Math.min(dist, 0.04));
+      moved = true;
+    };
+    apply(palmProbe.copy(palmLocal).applyQuaternion(handQuaternion).add(at), false);
+    for (const pad of arm.pads) {
+      pad.bone.getWorldPosition(probe);
+      probe.add(at).sub(seatOrigin);
+      apply(probe, true);
+    }
+    if (!moved) break;
   }
 }
 
@@ -679,54 +712,94 @@ function ejectLeft(arm: Arm, beakers: Beaker[]) {
   handPosition.set(at.x, at.y, at.z);
   const rotation = arm.body.rotation();
   handQuaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-  let push = 0;
-  vesselRel.set(0, 0, 0);
-  const sample = (x: number, y: number, z: number) => {
-    const out = outsidePush(beakers, handPosition.x + x, handPosition.y + y, handPosition.z + z);
-    if (out > push) {
-      push = out;
-      vesselAxis.copy(vesselRel);
+  seatOrigin.copy(handPosition);
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    const apply = (local: THREE.Vector3, ball: boolean) => {
+      probe.copy(local).applyQuaternion(handQuaternion).add(handPosition);
+      const dist = shiftOutOfGlass(beakers, probe, seatOrigin, handQuaternion, ball, vesselRel);
+      if (dist <= 1e-4) return;
+      handPosition.addScaledVector(vesselRel, Math.min(dist, 0.04));
+      moved = true;
+    };
+    apply(palmLocal, false);
+    for (const pad of arm.pads) {
+      const local = pad.collider.translation();
+      palmShift.set(local.x, local.y, local.z);
+      apply(palmShift, true);
     }
-  };
-  sample(0, 0, 0);
-  palmShift.set(0, 0.045, 0).applyQuaternion(handQuaternion);
-  sample(palmShift.x, palmShift.y, palmShift.z);
-  for (const pad of arm.pads) {
-    const local = pad.collider.translation();
-    palmShift.set(local.x, local.y, local.z).applyQuaternion(handQuaternion);
-    sample(palmShift.x, palmShift.y, palmShift.z);
+    if (!moved) break;
   }
-  if (push < 1e-4) return;
-  handPosition.addScaledVector(vesselAxis, push);
+  if (handPosition.distanceToSquared(seatOrigin) < 1e-8) return;
   arm.body.setTranslation({ x: handPosition.x, y: handPosition.y, z: handPosition.z }, true);
   arm.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
 }
 
-// How far a point sits inside a large pot, and the horizontal direction back out.
-// `vesselRel` is overwritten with that direction. Returns 0 when the point is outside.
-function outsidePush(beakers: Beaker[], x: number, y: number, z: number) {
+// How far `sample` must move to clear a large pot, and the direction out.
+// The open mouth stays open. A point on the far wall is left alone, so the hand is
+// never shoved through the pot. Returns 0 when the sample is already clear.
+export function shiftOutOfGlass(
+  beakers: Beaker[],
+  sample: THREE.Vector3,
+  wrist: THREE.Vector3,
+  quat: THREE.Quaternion,
+  ball: boolean,
+  dir: THREE.Vector3,
+) {
   let push = 0;
+  handInverse.copy(quat).invert();
   for (const beaker of beakers) {
     if (beaker.radius <= BEAKER_RADIUS) continue;
     const at = beaker.body.translation();
     const rotation = beaker.body.rotation();
     vesselQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    const axis = fingerAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
-    const relX = x - at.x;
-    const relY = y - at.y;
-    const relZ = z - at.z;
-    const axial = relX * axis.x + relY * axis.y + relZ * axis.z;
-    if (Math.abs(axial) > beaker.height / 2) continue;
-    const rx = relX - axis.x * axial;
-    const ry = relY - axis.y * axial;
-    const rz = relZ - axis.z * axial;
+    vesselAxis.set(0, 1, 0).applyQuaternion(vesselQuat);
+    const dx = sample.x - at.x;
+    const dy = sample.y - at.y;
+    const dz = sample.z - at.z;
+    const axial = dx * vesselAxis.x + dy * vesselAxis.y + dz * vesselAxis.z;
+    if (Math.abs(axial) > beaker.height / 2 + 0.01) continue;
+    const rx = dx - vesselAxis.x * axial;
+    const ry = dy - vesselAxis.y * axial;
+    const rz = dz - vesselAxis.z * axial;
     const radial = Math.hypot(rx, ry, rz);
-    if (radial < beaker.radius - 0.01) continue;
-    const need = beaker.radius + 0.012 - radial;
+    const wx = wrist.x - at.x;
+    const wy = wrist.y - at.y;
+    const wz = wrist.z - at.z;
+    const wAxial = wx * vesselAxis.x + wy * vesselAxis.y + wz * vesselAxis.z;
+    const wpx = wx - vesselAxis.x * wAxial;
+    const wpy = wy - vesselAxis.y * wAxial;
+    const wpz = wz - vesselAxis.z * wAxial;
+    const wristRadial = Math.hypot(wpx, wpy, wpz);
+    // The wrist is beside the pot, not down in the mouth and not above the rim.
+    const wristBeside = Math.abs(wAxial) <= beaker.height / 2 + 0.01 && wristRadial > beaker.radius - 0.01;
+    let ox: number;
+    let oy: number;
+    let oz: number;
+    if (radial < beaker.radius - GLASS_IN || radial < 1e-4) {
+      // Deep in the cavity. Leave a hand that reached in through the mouth. A wrist
+      // that is still outside means the hand went through the wall, so pull it back.
+      if (!wristBeside || wristRadial < 1e-4) continue;
+      const invW = 1 / wristRadial;
+      ox = wpx * invW;
+      oy = wpy * invW;
+      oz = wpz * invW;
+    } else {
+      const inv = 1 / radial;
+      ox = rx * inv;
+      oy = ry * inv;
+      oz = rz * inv;
+      const wdot = wpx * ox + wpy * oy + wpz * oz;
+      if (wdot <= 0) continue;
+    }
+    intoLocal.set(-ox, -oy, -oz).applyQuaternion(handInverse);
+    const skin = ball
+      ? PAD_RADIUS + 0.003
+      : Math.abs(intoLocal.x) * PALM_HALF_X + Math.abs(intoLocal.y) * PALM_HALF_Y + Math.abs(intoLocal.z) * PALM_HALF_Z + 0.003;
+    const need = beaker.radius + skin - radial;
     if (need <= push) continue;
     push = need;
-    if (radial < 1e-4) vesselRel.set(1, 0, 0);
-    else vesselRel.set(rx / radial, ry / radial, rz / radial);
+    dir.set(ox, oy, oz);
   }
   return push;
 }
@@ -766,9 +839,10 @@ export function followLeftHand(hands: Hands, beakers: Beaker[], world: RAPIER.Wo
       if (membership & (WORLD_GROUP | PROP_GROUP)) leftBlocked = true;
     });
   }
-  // The carried pot does not collide with the hands, so a bump can leave the
-  // left hand in the cavity. Put it back on the outside before the mesh follows.
-  ejectLeft(arm, beakers);
+  // The carried pot does not collide with the hands, so keep the left hand on the
+  // outside of it. Otherwise a bump can leave the hand in the cavity.
+  if (hands.carrying) holdCarriedHand(hands, beakers);
+  else ejectLeft(arm, beakers);
   const at = arm.body.translation();
   arm.hand.getWorldPosition(tipB);
   across.set(at.x - tipB.x, at.y - tipB.y, at.z - tipB.z);
@@ -903,10 +977,11 @@ const sample = new THREE.Vector3();
 const surfaceRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
 const worldPush = new THREE.Vector3();
 const localPush = new THREE.Vector3();
+const glassDir = new THREE.Vector3();
 
 // The wrist follows the look arc, which does not know about the counter. Keep the
 // palm and fingertips on top of the benches instead of letting the mesh sink in.
-export function settleHand(hands: Hands, world: RAPIER.World) {
+export function settleHand(hands: Hands, world: RAPIER.World, beakers: Beaker[] = []) {
   const parent = hands.model.parent;
   if (!parent) return;
   let moved = false;
@@ -914,6 +989,7 @@ export function settleHand(hands: Hands, world: RAPIER.World) {
     worldPush.set(0, 0, 0);
     let lift = 0;
     let slide = 0;
+    let glass = 0;
     const consider = (arm: Arm) => {
       if (!arm.solid && arm.side === -1) return;
       if (arm.driven) return;
@@ -959,15 +1035,32 @@ export function settleHand(hands: Hands, world: RAPIER.World) {
       };
       arm.hand.getWorldPosition(sample);
       arm.hand.getWorldQuaternion(handQuat);
+      const wrist = tipB.copy(sample);
       sample.add(tipPosition.copy(palmLocal).applyQuaternion(handQuat));
       sampleArm(sample.x, sample.y, sample.z);
+      // Only while F is in. A one-hand pinch has to be able to meet the glass.
+      if (hands.left.raised && !hands.carrying && beakers.length) {
+        const dist = shiftOutOfGlass(beakers, sample, wrist, handQuat, false, vesselRel);
+        if (dist > glass) {
+          glass = dist;
+          glassDir.copy(vesselRel);
+        }
+      }
       for (const pad of arm.pads) {
         pad.bone.getWorldPosition(sample);
         sampleArm(sample.x, sample.y, sample.z);
+        if (hands.left.raised && !hands.carrying && beakers.length) {
+          const dist = shiftOutOfGlass(beakers, sample, wrist, handQuat, true, vesselRel);
+          if (dist > glass) {
+            glass = dist;
+            glassDir.copy(vesselRel);
+          }
+        }
       }
     };
     consider(hands.arm);
     consider(hands.left);
+    if (glass > 1e-4) worldPush.addScaledVector(glassDir, Math.min(glass, 0.04));
     worldPush.y = Math.max(worldPush.y, lift);
     if (worldPush.lengthSq() < 1e-8) break;
     parent.getWorldQuaternion(parentQuat);

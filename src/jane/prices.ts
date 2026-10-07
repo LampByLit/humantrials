@@ -4,9 +4,10 @@ import { isElemental } from "../sim/recipe";
 
 // Water and milk are the cheap end of the book. Pure channel colors and anything
 // the demixer cannot split are a flat $99, because the lab cannot mix its way
-// there. Catalog drugs keep one price forever, above what green pays for the
-// opening fentanyl order, so buying the order and handing it back is not a trade.
-// Everything else is priced by hue: violets and purples cost more, mints and limes less.
+// there. Catalog drugs keep one price forever. Green pays that price for a
+// stocktail litre, so buying the finished chemical and handing it back does not
+// earn anything. Everything else is priced by hue: violets and purples cost more,
+// mints and limes less.
 const BOOK: Record<string, number> = {
   caffeine: 24,
   acetaminophen: 20,
