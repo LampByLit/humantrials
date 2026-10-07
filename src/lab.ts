@@ -144,19 +144,23 @@ function largePots(hexes: number[]): Stock[] {
   return hexes.map((hex) => ({ size: POT_L, hex, fill: 0.65, exact: true }));
 }
 
-// Every vessel the lab has, smallest to largest. A supply bench fills the aisle row
-// with water and leaves the same sizes empty behind it.
+// Every vessel the lab has, smallest to largest. Both rows are full, so a bench holds two of each.
 const SUPPLY: Size[] = [MEDIUM, LARGE, TRAY, POT_S, POT_M, POT_L, POT_XL];
 
-function supply(x: number, z: number, facing: 1 | -1): Bench {
+function supply(x: number, z: number, facing: 1 | -1, kind: "water" | "milk" = "water"): Bench {
+  const row: Stock[] = SUPPLY.map((size) => ({
+    size,
+    fill: size.flange ? 0.7 : 0.8,
+    hex: kind === "milk" ? MILK : undefined,
+  }));
   return {
-    label: "Water",
+    label: kind === "milk" ? "Milk" : "Water",
     x,
     z,
     facing,
     width: 2.4,
-    items: SUPPLY.map((size) => ({ size, fill: size.flange ? 0.7 : 0.8 })),
-    back: empties(SUPPLY),
+    items: row,
+    back: row,
     backRow: POT_BACK,
   };
 }
@@ -218,7 +222,7 @@ function benches(seed: number): Bench[] {
     supply(-6, 5.4, -1),
     supply(1.9, 5.4, -1),
     supply(5.5, 5.4, -1),
-    supply(6.8, -6.4, 1),
+    supply(6.8, -6.4, 1, "milk"),
     {
       label: "Catalog",
       x: -3.2,
