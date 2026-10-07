@@ -4,10 +4,9 @@ import { isElemental } from "../sim/recipe";
 
 // Water and milk are the cheap end of the book. Pure channel colors and anything
 // the demixer cannot split are a flat $99, because the lab cannot mix its way
-// there. Catalog drugs keep one price forever. Green pays that price for a
-// stocktail litre, so buying the finished chemical and handing it back does not
-// earn anything. Everything else is priced by hue: violets and purples cost more,
-// mints and limes less.
+// there. Catalog drugs keep one price forever. Green pays well over that for a
+// stocktail litre, so Jane never sells stocktails. Everything else is priced by
+// hue: violets and purples cost more, mints and limes less.
 const BOOK: Record<string, number> = {
   caffeine: 24,
   acetaminophen: 20,
@@ -95,6 +94,10 @@ export function priceOf(kind: string): number {
   if (id && BOOK[id] !== undefined) return BOOK[id];
   if (isPure(hex) || isElemental(hex)) return 99;
   return huePrice(hex);
+}
+
+export function greenPriceOf(hex: string): number {
+  return Math.max(200, priceOf(hex) * 3);
 }
 
 export function priceOfFill(fill: Fill): number {

@@ -27,6 +27,10 @@ export function stocktails(): Stocktail[] {
   });
 }
 
+export function isStocktail(hex: string): boolean {
+  return stocktails().some((item) => item.hex === hex.toUpperCase());
+}
+
 export function pickStocktail(rng: () => number, avoid: string): Stocktail {
   const pool = stocktails().filter((item) => item.hex !== avoid.toUpperCase());
   return pool[Math.floor(rng() * pool.length)] ?? stocktails()[0];

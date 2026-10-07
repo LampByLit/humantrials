@@ -6,7 +6,7 @@ import { STOCK_CONCENTRATION } from "../fluid/solution";
 import catalog from "../../concept/chems.json";
 import { cents } from "./format";
 import { blueReason, blueReport, greenReason, greenReport, type BlueReport, type GreenReport } from "./lines";
-import { priceOf, priceOfFill, type Fill } from "./prices";
+import { greenPriceOf, priceOfFill, type Fill } from "./prices";
 import { pickStocktail } from "./stocktails";
 
 // A stock litre is the mass in one litre at shelf strength. Dilution keeps the hex
@@ -54,7 +54,7 @@ export function createLedger(seed: number): Ledger {
       name: first.name,
       litres: 1,
       filled: 0,
-      pricePerLitre: priceOf(first.hex),
+      pricePerLitre: greenPriceOf(first.hex),
       allowAnalogs: true,
       reason: greenReason(first.name, rng),
       generation: 0,
@@ -110,7 +110,7 @@ function rollGreen(ledger: Ledger, avoid: string): Contract {
     name: picked.name,
     litres: 1,
     filled: 0,
-    pricePerLitre: priceOf(picked.hex),
+    pricePerLitre: greenPriceOf(picked.hex),
     allowAnalogs: true,
     reason: greenReason(picked.name, ledger.rng),
     generation: ledger.green.generation + 1,

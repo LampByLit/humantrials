@@ -24,6 +24,14 @@ describe("Jane's local answers", () => {
     expect(replyTo("why am I here", talk).text.toLowerCase()).toContain("recursion");
   });
 
+  it("won't sell a stocktail", () => {
+    const talk = ctx();
+    const refused = replyTo("order 1 litre of sugar", talk);
+    expect(refused.effect).toBeUndefined();
+    expect(refused.text).toContain("stocktail");
+    expect(talk.ledger.credits).toBe(500);
+  });
+
   it("quotes and sells from the book", () => {
     const talk = ctx();
     expect(replyTo("how much is fentanyl", talk).text).toContain("$1,600");

@@ -161,6 +161,10 @@ export function orderArrival(name: string, litres: number): string {
   return `Your ${litresText(litres)} of ${name} is on the red counter.`;
 }
 
+export function stocktailRefusal(name: string): string {
+  return `${name} is a stocktail. Green buys those, so I don't sell them. Mix it yourself.`;
+}
+
 export function brokeLine(cost: number, credits: number): string {
   return `That is ${moneyText(cost)}. You have ${moneyText(credits)}. I don't extend credit. That would be a different profession.`;
 }

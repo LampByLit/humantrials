@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { analogsOf } from "../sim/analogs";
 import { isElemental } from "../sim/recipe";
 import { acceptReward, createLedger, MASS_PER_LITRE, submitSamples, tryOrder } from "./ledger";
-import { priceOf } from "./prices";
+import { greenPriceOf, priceOf } from "./prices";
 import { stocktails } from "./stocktails";
 
 describe("ledger", () => {
@@ -11,7 +11,9 @@ describe("ledger", () => {
     const opening = ledger.green.hex;
     expect(stocktails().some((item) => item.hex === opening)).toBe(true);
     for (const item of stocktails()) expect(isElemental(item.hex)).toBe(false);
-    const price = priceOf(opening);
+    const price = greenPriceOf(opening);
+    expect(price).toBeGreaterThanOrEqual(200);
+    expect(price).toBeGreaterThan(priceOf(opening));
     const result = submitSamples(ledger, "green", [{ hex: opening, mass: MASS_PER_LITRE, volume: 0.001 }]);
     expect(result.pay).toBe(price);
     expect(ledger.credits).toBe(500 + price);

@@ -27,6 +27,7 @@ import {
   rehabLine,
   rewardAccept,
   rewardArrival,
+  stocktailRefusal,
   submitHelp,
   thanksLine,
   whoLine,
@@ -34,6 +35,7 @@ import {
 import type { Memory } from "./memory";
 import { cleanQuery, orderBody, priceBody, readLitres, resolveChem } from "./names";
 import { priceOfFill, type Fill } from "./prices";
+import { isStocktail } from "./stocktails";
 
 export type TalkEffect =
   | { type: "order"; fill: Fill; name: string; litres: number; arrival: string }
@@ -140,6 +142,7 @@ function order(body: string, ledger: Ledger): TalkReply {
   }
   const found = resolveChem(read.rest);
   if (!found) return { text: missingNameLine(), intent: "local" };
+  if (found.hex && isStocktail(found.hex)) return { text: stocktailRefusal(found.name), intent: "local" };
   const placed = tryOrder(ledger, found.fill, litres);
   if (!placed.ok) return { text: brokeLine(placed.cost, ledger.credits), intent: "local" };
   return {
