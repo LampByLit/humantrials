@@ -129,6 +129,32 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
   aimFingers(hands.left, beakers, undefined, reach);
 }
 
+const turnQuat = new THREE.Quaternion();
+const turnVec = new THREE.Vector3();
+const upAxis = new THREE.Vector3(0, 1, 0);
+
+// Mouse yaw swings the hands around the body in a single frame, far faster than the weld
+// can drag a heavy pot after them. Held glass turns with the body instead.
+export function turnHeld(hold: Hold, pivot: THREE.Vector3, yaw: number) {
+  if (Math.abs(yaw) < 1e-7) return;
+  turnQuat.setFromAxisAngle(upAxis, yaw);
+  const turned = new Set<Beaker>();
+  for (const grip of hold.grips) {
+    const body = grip.beaker.body;
+    if (turned.has(grip.beaker)) continue;
+    turned.add(grip.beaker);
+    const at = body.translation();
+    turnVec.set(at.x, at.y, at.z).sub(pivot).applyQuaternion(turnQuat).add(pivot);
+    body.setTranslation({ x: turnVec.x, y: turnVec.y, z: turnVec.z }, true);
+    const rotation = body.rotation();
+    bodyQuat.set(rotation.x, rotation.y, rotation.z, rotation.w).premultiply(turnQuat);
+    body.setRotation({ x: bodyQuat.x, y: bodyQuat.y, z: bodyQuat.z, w: bodyQuat.w }, true);
+    const v = body.linvel();
+    turnVec.set(v.x, v.y, v.z).applyQuaternion(turnQuat);
+    body.setLinvel({ x: turnVec.x, y: turnVec.y, z: turnVec.z }, true);
+  }
+}
+
 function grab(hold: Hold, hands: Hands, arm: Arm, beaker: Beaker, world: RAPIER.World) {
   const parent = hands.model.parent;
   if (!parent) return;

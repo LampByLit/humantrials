@@ -5,7 +5,7 @@ import { applyFeel, createPlayer, DRINK_PITCH, playerCapsule, updatePlayer } fro
 import { createReach, updateReach } from "./reach";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createHands, driveLeftHand, followLeftHand, holdCarriedHand, settleHand, tintSkin, updateHands, type Hands } from "./hands";
-import { createHold, updateHold } from "./hold";
+import { createHold, turnHeld, updateHold } from "./hold";
 import { createHandShadow, updateHandShadow } from "./handShadow";
 import { containVessels, createLab, readIntake, syncBeakers, type Beaker } from "./lab";
 import { demixerSpouts, readDemixer } from "./demixer";
@@ -225,7 +225,9 @@ function frame(now: number) {
       if (document.pointerLockElement) document.exitPointerLock();
     }
   }
+  const yawBefore = player.yaw;
   updatePlayer(player, world, dt, grounded, verticalVelocity, sense);
+  turnHeld(hold, player.object.position, player.yaw - yawBefore);
   updateReach(reach, hands, player, dt);
   player.object.updateMatrixWorld(true);
   updateHands(hands, beakers, dt, sense);
