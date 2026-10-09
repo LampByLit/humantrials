@@ -54,7 +54,7 @@ export function experimentLine(): string {
 }
 
 export function arrivalBrief(): string {
-  return "I'm Jane. You are the human-trial arm of an experiment inside an experiment. They are studying recursion, and your part is the chemistry. Ask me anything.";
+  return "I'm Jane. Ask me anything.";
 }
 
 export function rehabLine(): string {

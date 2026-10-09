@@ -71,8 +71,8 @@ describe("Jane's local answers", () => {
   it("briefs a first meeting briefly", () => {
     const line = arrivalBrief();
     expect(line).toContain("I'm Jane");
-    expect(line).toContain("experiment inside an experiment");
-    expect(line.length).toBeLessThan(220);
+    expect(line).not.toMatch(/experiment|trial/i);
+    expect(line.length).toBeLessThan(60);
   });
 
   it("sends an open question to the model", () => {
