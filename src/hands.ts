@@ -619,21 +619,28 @@ export function driveLeftHand(hands: Hands, beakers: Beaker[], dt: number) {
   arm.body.wakeUp();
 }
 
-// While the weld carries the pot, the left hand stays on the outside and moves with it.
-// Collision with the glass is off then, so nothing else keeps the hand out.
+// While the pot is carried, the left hand stays on the outside and moves with the pose.
 export function holdCarriedHand(hands: Hands, beakers: Beaker[]) {
   const arm = hands.left;
   if (!hands.carrying || !arm.driven || !arm.solid) return;
   const shoulder = hands.leftShoulder;
   const amount = hands.left.raised || hands.pair > 0.02 ? hands.pair : 0;
-  savedShoulder.copy(shoulder.position);
   placeLeft(hands, hands.aiming ? hands.aimPoint : null, amount);
   hands.model.updateMatrixWorld(true);
   arm.hand.getWorldPosition(leftTarget);
   arm.hand.getWorldQuaternion(handQuaternion);
+  seated.copy(leftTarget);
   seatHandPoint(arm, beakers, leftTarget, leftTarget);
-  shoulder.position.copy(savedShoulder);
-  hands.model.updateMatrixWorld(true);
+  // The pose is the arm. Physics used to drag the shoulder after a lagging pot.
+  across.subVectors(leftTarget, seated);
+  const shoulderParent = shoulder.parent;
+  if (shoulderParent && across.lengthSq() > 1e-8) {
+    shoulder.getWorldPosition(shoulderAt);
+    shoulderAt.add(across);
+    shoulderParent.worldToLocal(shoulderAt);
+    shoulder.position.copy(shoulderAt);
+    hands.model.updateMatrixWorld(true);
+  }
   parkLeft(arm, leftTarget);
 }
 
@@ -649,6 +656,15 @@ function parkLeft(arm: Arm, at: THREE.Vector3) {
   arm.body.setRotation({ x: handQuaternion.x, y: handQuaternion.y, z: handQuaternion.z, w: handQuaternion.w }, true);
   arm.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   arm.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  if (arm.body.bodyType() === RAPIER.RigidBodyType.KinematicPositionBased) {
+    arm.body.setNextKinematicTranslation({ x: at.x, y: at.y, z: at.z });
+    arm.body.setNextKinematicRotation({
+      x: handQuaternion.x,
+      y: handQuaternion.y,
+      z: handQuaternion.z,
+      w: handQuaternion.w,
+    });
+  }
   syncPads(arm);
 }
 
@@ -839,10 +855,13 @@ export function followLeftHand(hands: Hands, beakers: Beaker[], world: RAPIER.Wo
       if (membership & (WORLD_GROUP | PROP_GROUP)) leftBlocked = true;
     });
   }
-  // The carried pot does not collide with the hands, so keep the left hand on the
-  // outside of it. Otherwise a bump can leave the hand in the cavity.
-  if (hands.carrying) holdCarriedHand(hands, beakers);
-  else ejectLeft(arm, beakers);
+  // The carried pose owns the shoulder. Copying the rigid body back onto it is
+  // what swung the arm whenever the body moved.
+  if (hands.carrying) {
+    holdCarriedHand(hands, beakers);
+    return;
+  }
+  ejectLeft(arm, beakers);
   const at = arm.body.translation();
   arm.hand.getWorldPosition(tipB);
   across.set(at.x - tipB.x, at.y - tipB.y, at.z - tipB.z);

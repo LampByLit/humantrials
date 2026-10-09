@@ -6,6 +6,9 @@ import { BEAKER_RADIUS, type Beaker } from "./lab";
 
 const PROP = 0x0008;
 const HAND = 0x0004;
+const PLAYER = 0x0001;
+// A carried pot stays a prop for the room, and stops being one for the body and the hands.
+const CARRIED_FILTER = 0xffff ^ HAND ^ PLAYER;
 const GRAB_SQUEEZE = 0.35;
 const RELEASE_SQUEEZE = 0.22;
 // Gap from a pad centre to the glass. The sphere radius plus a couple of millimetres,
@@ -35,8 +38,9 @@ const BREAK_FORCE = 80;
 const GRACE = 0.2;
 const SUPPORT_NORMAL = 0.55;
 
-// The beaker stays a dynamic body. A fixed joint welds the pinch, so the glass keeps the
-// pose it had when the fingers closed and turns when the wrist pours.
+// A one-hand pinch stays a dynamic body on a fixed joint. A pot taken with F is kinematic
+// on the hand instead: the joint cannot keep up with a turn or a step, and the body
+// was walking into the glass.
 type Grip = {
   arm: Arm;
   beaker: Beaker;
@@ -49,6 +53,8 @@ type Grip = {
   stuck: number;
   // Held because F put it between both hands, not because the right hand pinched.
   paired: boolean;
+  lastPos: THREE.Vector3;
+  velocity: THREE.Vector3;
 };
 
 type Quiet = { beaker: Beaker; time: number };
@@ -96,23 +102,33 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
   for (let i = hold.grips.length - 1; i >= 0; i--) {
     const grip = hold.grips[i];
     if (grip.paired) {
-      if (!hands.left.raised || pairLost(grip, dt)) release(hold, grip, world);
-      else grip.age += dt;
+      // F is the only release. The pot is kinematic on the hand, so a turn or a step
+      // cannot pull the anchors apart and the old separation check must not drop it.
+      if (!hands.left.raised) release(hold, grip, world);
+      else {
+        grip.age += dt;
+        snapGrip(grip, dt);
+      }
       continue;
     }
     if (grip.arm.squeeze < RELEASE_SQUEEZE || lost(grip, world, dt)) release(hold, grip, world);
     else grip.age += dt;
   }
 
-  // The left hand has been pressing in. Once both hands are on the glass, the same
-  // joint that pinches a beaker takes the pot's weight. Squeezing alone is what sends it flying.
+  // The left hand has been pressing in. Once both hands are on the glass, the pot is
+  // locked to the right hand. Squeezing alone is what sends it flying.
   if (hands.left.raised && hands.pair > 0.65 && !hold.grips.some((grip) => grip.arm === arm)) {
     const beaker = betweenHands(hands, hold, beakers);
     if (beaker) {
       const at = beaker.body.translation();
       anchor.set(at.x, at.y, at.z);
+      const before = hold.grips.length;
       grab(hold, hands, arm, beaker, world);
-      hold.grips[hold.grips.length - 1].paired = true;
+      const grip = hold.grips[before];
+      if (grip) {
+        grip.paired = true;
+        lockPaired(grip, world);
+      }
     }
   }
 
@@ -120,7 +136,9 @@ export function updateHold(hold: Hold, hands: Hands, beakers: Beaker[], world: R
     const beaker = pinch(arm, hold, beakers);
     if (beaker) grab(hold, hands, arm, beaker, world);
   }
-  hands.carrying = hold.grips.some((grip) => grip.paired);
+  const carrying = hold.grips.some((grip) => grip.paired);
+  if (carrying !== hands.carrying) setCarryBody(hands.left, carrying);
+  hands.carrying = carrying;
 
   settleQuiet(hold, hands, dt);
   const held = hold.grips.find((grip) => grip.arm === arm);
@@ -140,6 +158,8 @@ export function turnHeld(hold: Hold, pivot: THREE.Vector3, yaw: number) {
   turnQuat.setFromAxisAngle(upAxis, yaw);
   const turned = new Set<Beaker>();
   for (const grip of hold.grips) {
+    // A paired pot is snapped to the hand, which already turned with the body.
+    if (grip.paired) continue;
     const body = grip.beaker.body;
     if (turned.has(grip.beaker)) continue;
     turned.add(grip.beaker);
@@ -201,32 +221,88 @@ function grab(hold: Hold, hands: Hands, arm: Arm, beaker: Beaker, world: RAPIER.
     age: 0,
     stuck: 0,
     paired: false,
+    lastPos: bodyPos.clone(),
+    velocity: new THREE.Vector3(),
   });
+}
+
+// Puts a paired pot on the hand before the arms aim, so the left hand reaches the
+// glass that is already moving with the body and not last frame's pot.
+export function snapHeld(hold: Hold, dt: number) {
+  for (const grip of hold.grips) {
+    if (grip.paired) snapGrip(grip, dt);
+  }
+}
+
+function lockPaired(grip: Grip, world: RAPIER.World) {
+  if (grip.joint.isValid()) world.removeImpulseJoint(grip.joint, true);
+  const body = grip.beaker.body;
+  body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+  body.setGravityScale(0, true);
+  setCarriedCollision(grip.beaker);
+  const at = body.translation();
+  grip.lastPos.set(at.x, at.y, at.z);
+  grip.velocity.set(0, 0, 0);
+  snapGrip(grip, 0);
+}
+
+function setCarryBody(arm: Arm, carried: boolean) {
+  const body = arm.body;
+  body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  body.setGravityScale(0, true);
+  body.setBodyType(carried ? RAPIER.RigidBodyType.KinematicPositionBased : RAPIER.RigidBodyType.Dynamic, true);
+}
+
+function snapGrip(grip: Grip, dt: number) {
+  grip.arm.hand.getWorldPosition(handPos);
+  grip.arm.hand.getWorldQuaternion(handQuat);
+  desiredQuat.copy(handQuat).multiply(grip.handRel);
+  solvedA.copy(grip.anchor1).applyQuaternion(handQuat).add(handPos);
+  solvedB.copy(grip.anchor2).applyQuaternion(desiredQuat);
+  bodyPos.copy(solvedA).sub(solvedB);
+  if (dt > 1e-4 && bodyPos.distanceToSquared(grip.lastPos) > 1e-8) {
+    grip.velocity.subVectors(bodyPos, grip.lastPos).multiplyScalar(1 / dt);
+  }
+  grip.lastPos.copy(bodyPos);
+  const body = grip.beaker.body;
+  body.setTranslation({ x: bodyPos.x, y: bodyPos.y, z: bodyPos.z }, true);
+  body.setRotation({ x: desiredQuat.x, y: desiredQuat.y, z: desiredQuat.z, w: desiredQuat.w }, true);
+  body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  if (body.bodyType() === RAPIER.RigidBodyType.KinematicPositionBased) {
+    body.setNextKinematicTranslation({ x: bodyPos.x, y: bodyPos.y, z: bodyPos.z });
+    body.setNextKinematicRotation({ x: desiredQuat.x, y: desiredQuat.y, z: desiredQuat.z, w: desiredQuat.w });
+  }
+}
+
+function setCarriedCollision(beaker: Beaker) {
+  for (let i = 0; i < beaker.body.numColliders(); i++) {
+    beaker.body.collider(i).setCollisionGroups((CARRIED_FILTER << 16) | PROP);
+  }
+}
+
+function restoreDynamic(grip: Grip) {
+  const body = grip.beaker.body;
+  body.setGravityScale(1, true);
+  body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+  setHandCollision(grip.beaker, false);
+  body.setLinvel({ x: grip.velocity.x, y: grip.velocity.y, z: grip.velocity.z }, true);
+  body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  body.wakeUp();
 }
 
 function release(hold: Hold, grip: Grip, world: RAPIER.World) {
   if (grip.joint.isValid()) world.removeImpulseJoint(grip.joint, true);
+  if (grip.paired) restoreDynamic(grip);
   const index = hold.grips.indexOf(grip);
   if (index >= 0) hold.grips.splice(index, 1);
   // Keep the hand out of the glass until the fingers have opened, or the pads pop it.
   if (!hold.quiet.some((item) => item.beaker === grip.beaker)) {
     hold.quiet.push({ beaker: grip.beaker, time: 0 });
   }
-}
-
-function pairLost(grip: Grip, dt: number) {
-  if (grip.age < GRACE) return false;
-  const gap = separation(grip);
-  // A hard knock the joint cannot follow. Holding on past this is what winds the weld up.
-  if (gap > 0.12) return true;
-  if (gap > BREAK_SEPARATION) grip.stuck += dt;
-  else grip.stuck = 0;
-  if (grip.stuck > STUCK_TIME) return true;
-  grip.arm.hand.getWorldQuaternion(handQuat);
-  const rotation = grip.beaker.body.rotation();
-  bodyQuat.set(rotation.x, rotation.y, rotation.z, rotation.w);
-  desiredQuat.copy(handQuat).multiply(grip.handRel);
-  return rotationError(bodyQuat, desiredQuat, axis) > BREAK_ANGLE;
 }
 
 function lost(grip: Grip, world: RAPIER.World, dt: number) {

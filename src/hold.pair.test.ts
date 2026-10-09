@@ -86,16 +86,47 @@ describe("two-hand pot grab", () => {
     updateHold(hold, hands, [beaker], world, DT);
     expect(hold.grips.filter((grip) => grip.paired)).toHaveLength(1);
 
-    const start = right.body.translation();
+    const startY = right.hand.position.y;
     for (let i = 0; i < 40; i++) {
-      const nextY = start.y + (i + 1) * 0.012;
-      right.body.setNextKinematicTranslation({ x: start.x, y: nextY, z: start.z });
+      right.hand.position.y = startY + (i + 1) * 0.012;
+      right.hand.updateMatrixWorld(true);
       world.integrationParameters.dt = DT;
       updateHold(hold, hands, [beaker], world, DT);
       world.step();
     }
     expect(hold.grips.filter((grip) => grip.paired)).toHaveLength(1);
     expect(beaker.body.translation().y).toBeGreaterThan(rest + 0.35);
+  });
+
+  it("keeps the pot on the hand through a fast turn and a long step, and out of the body", () => {
+    const world = worldOf();
+    const beaker = pot(world, 1);
+    const y = 1;
+    const right = arm(world, new THREE.Vector3(0, y, 0.105 + 0.025), true);
+    const left = arm(world, new THREE.Vector3(-(0.105 + 0.025), y, 0), false);
+    const hands = handsOf(right, left);
+    const hold = createHold();
+    place(right, left);
+    updateHold(hold, hands, [beaker], world, DT);
+    expect(hold.grips.filter((grip) => grip.paired)).toHaveLength(1);
+
+    const groups = beaker.body.collider(0).collisionGroups();
+    const playerGroups = (0x0002 | 0x0008) << 16 | 0x0001;
+    const hitsPlayer =
+      (playerGroups & 0xffff & (groups >> 16)) !== 0 && ((groups & 0xffff) & (playerGroups >> 16)) !== 0;
+    expect(hitsPlayer).toBe(false);
+
+    const parent = right.hand.parent!;
+    parent.position.set(0.55, 0.3, -0.4);
+    parent.rotation.y = 1.4;
+    parent.updateMatrixWorld(true);
+    updateHold(hold, hands, [beaker], world, DT);
+    world.step();
+    expect(hold.grips.filter((grip) => grip.paired)).toHaveLength(1);
+    const at = beaker.body.translation();
+    const hand = right.hand.getWorldPosition(new THREE.Vector3());
+    expect(Math.hypot(at.x - hand.x, at.y - hand.y, at.z - hand.z)).toBeLessThan(0.25);
+    expect(Math.hypot(at.x, at.z)).toBeGreaterThan(0.3);
   });
 
   it("does not weld when both hands are on the same face or one has gone through the wall", () => {
